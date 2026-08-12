@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>tintin. — controle financeiro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@1,600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<!-- TELA DE LOGIN / CADASTRO -->
+<div class="auth-page" id="authOverlay">
+  <div class="auth-decor" aria-hidden="true"></div>
+  <div class="auth-center">
+    <span class="auth-badge">
+      <span class="auth-badge-mark">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M3 8a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Z" stroke="#10231A" stroke-width="2"/><path d="M16 12h3" stroke="#10231A" stroke-width="2" stroke-linecap="round"/><path d="M7 6V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1" stroke="#10231A" stroke-width="2"/></svg>
+      </span>
+      tintin<span class="dot">.</span>
+    </span>
+    <h1 class="auth-tagline">bem-vindo à <em>paz</em> financeira.</h1>
+    <p class="auth-sub">aqui cada tintin é gerenciado!</p>
+
+    <div class="auth-card">
+      <h2 id="authTitle">entrar no tintin.</h2>
+      <form id="authForm">
+        <div class="field" id="authNameField" style="display:none;">
+          <label>seu nome</label>
+          <input type="text" id="authName" placeholder="como podemos te chamar">
+        </div>
+        <div class="field">
+          <label>e-mail</label>
+          <input type="email" id="authEmail" placeholder="voce@email.com" autocomplete="email">
+        </div>
+        <div class="field">
+          <label>senha</label>
+          <input type="password" id="authPassword" placeholder="mínimo 6 caracteres" autocomplete="current-password">
+        </div>
+        <p id="authError" class="dialog-msg auth-error" style="display:none;"></p>
+        <div class="auth-actions">
+          <button type="submit" class="btn-primary" id="authSubmitBtn">entrar</button>
+        </div>
+        <p id="authToggleText" class="auth-toggle-text">não tem conta? <a href="#" id="authToggleLink">criar agora</a></p>
+      </form>
+    </div>
+  </div>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="mark">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M3 8a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Z" stroke="#10231A" stroke-width="2"/><path d="M16 12h3" stroke="#10231A" stroke-width="2" stroke-linecap="round"/><path d="M7 6V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1" stroke="#10231A" stroke-width="2"/></svg>
+    </span>
+    tintin<span class="dot">.</span>
+  </div>
+  <div class="topbar-center">
+    <nav class="tabs">
+      <button class="tab active" data-tab="dashboard">painel</button>
+      <button class="tab" data-tab="saldos">mapa</button>
+      <button class="tab" data-tab="previsao">previsto</button>
+      <button class="tab" data-tab="lancamentos">realizado</button>
+    </nav>
+    <button class="btn-cta" id="btnNovo">+ novo lançamento</button>
+  </div>
+  <div class="topbar-spacer" aria-hidden="true"></div>
+</header>
+
+<main>
+
+  <!-- DASHBOARD -->
+  <section id="view-dashboard" class="view active">
+    <div class="month-nav">
+      <button id="prevMonth" aria-label="mês anterior">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="month-label" id="monthLabel">—</div>
+      <button id="nextMonth" aria-label="próximo mês">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+
+    <div class="stat-grid">
+      <div class="stat-card investido">
+        <div class="stat-badge">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M5 19V13" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M11 19V9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M17 19V5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+        </div>
+        <div class="stat-label">valor investido</div>
+        <div class="stat-value" id="statInvestido">—</div>
+      </div>
+      <div class="stat-card disponivel">
+        <div class="stat-badge">
+          <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M12 4v2M12 18v2M4 12h2M18 12h2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+        <div class="stat-label">saldo em conta</div>
+        <div class="stat-value" id="statSaldoConta">—</div>
+      </div>
+      <div class="stat-card receita">
+        <div class="stat-badge">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 17l6-6 4 4 6-8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 7h5v5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <div class="mini-toggle" id="receitaModeToggle">
+          <button type="button" class="active" data-rm="realizado">real</button>
+          <button type="button" data-rm="previsto">prev</button>
+        </div>
+        <div class="stat-label">receitas do mês</div>
+        <div class="stat-value" id="statReceita">—</div>
+      </div>
+      <div class="stat-card despesa">
+        <div class="stat-badge">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 7l6 6 4-4 6 8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 17h5v-5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <span class="stat-info" tabindex="0">
+          <span class="stat-info-icon">i</span>
+          <span class="stat-info-tip" id="statDespesaSub"></span>
+        </span>
+        <div class="stat-label">gasto realizado</div>
+        <div class="stat-value" id="statDespesa">—</div>
+      </div>
+      <div class="stat-card proximo">
+        <div class="stat-badge">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M8 3v4M16 3v4M4 9h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><rect x="4" y="5" width="16" height="16" rx="2" stroke="currentColor" stroke-width="2"/></svg>
+        </div>
+        <div class="stat-label">previsão gasto próx. mês</div>
+        <div class="stat-value" id="statPrevistoProximo">—</div>
+      </div>
+      <div class="stat-card economia">
+        <div class="stat-badge">
+          <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="2"/><path d="M12 8v4l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+        <div class="mini-toggle" id="economiaModeToggle">
+          <button type="button" class="active" data-em="realizado">real</button>
+          <button type="button" data-em="previsto">prev</button>
+        </div>
+        <div class="stat-label">economia do mês</div>
+        <div class="stat-value" id="statEconomia">—</div>
+        <div class="stat-sub" id="statEconomiaSub" style="line-height:1.6;"></div>
+      </div>
+    </div>
+
+    <div style="text-align:left;margin:0 0 20px;">
+      <button type="button" id="btnGerarPDF" class="btn-report">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M14 3v5h5" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M6 3h8l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9 15h6M9 11h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        gerar relatório do mês (PDF)
+      </button>
+    </div>
+
+    <div class="grid-2">
+      <div class="panel">
+        <h3 id="pieTitleDespesa">despesas por categoria</h3>
+        <div id="pieWrap" class="chart-wrap"><canvas id="pieChart"></canvas></div>
+        <div class="legend-list" id="pieLegend"></div>
+      </div>
+      <div class="panel">
+        <h3>receitas por categoria</h3>
+        <div id="pieWrapReceita" class="chart-wrap"><canvas id="pieChartReceita"></canvas></div>
+        <div class="legend-list" id="pieLegendReceita"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>receitas x despesas — últimos 6 meses</h3>
+      <div class="chart-wrap" style="height:260px;"><canvas id="barChart"></canvas></div>
+    </div>
+  </section>
+
+  <!-- SALDOS -->
+  <section id="view-saldos" class="view">
+    <div class="month-nav">
+      <button id="saldosPrevMonth" aria-label="mês anterior">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="month-label" id="saldosMonthLabel">—</div>
+      <button id="saldosNextMonth" aria-label="próximo mês">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div class="panel" style="padding:0;overflow-x:auto;">
+      <table class="tx-table saldos-table">
+        <thead><tr><th>dia</th><th>saldo inicial</th><th>entradas</th><th>saídas</th><th>saldo do dia</th><th></th></tr></thead>
+        <tbody id="saldosTableBody"></tbody>
+        <tfoot id="saldosTableFoot"></tfoot>
+      </table>
+    </div>
+  </section>
+
+  <!-- PREVISÃO -->
+  <section id="view-previsao" class="view">
+    <div class="month-nav">
+      <button id="prevPrevMonth" aria-label="mês anterior">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="month-label" id="previsaoMonthLabel">—</div>
+      <button id="prevNextMonth" aria-label="próximo mês">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div class="prev-toggle" id="previsaoTypeToggle">
+      <button type="button" class="active" data-pt="despesa">despesas</button>
+      <button type="button" data-pt="receita">receitas</button>
+    </div>
+    <div class="panel">
+      <h3 style="display:flex;justify-content:space-between;align-items:center;">
+        <span id="previsaoListTitle">orçamento por categoria</span>
+        <span id="previsaoTotal" style="font-family:'Baloo 2';font-size:18px;color:var(--muted);">R$ 0,00</span>
+      </h3>
+      <div id="previsaoList"></div>
+      <button class="add-cat-btn" id="previsaoAddCatBtn" data-t="despesa" style="margin-top:14px;">+ nova categoria de despesa</button>
+    </div>
+    <div class="panel" style="margin-top:16px;">
+      <h3>fechar mês</h3>
+      <p class="dialog-msg" id="fecharMesResumo" style="font-size:14.5px;"></p>
+      <button type="button" class="btn-cta" id="btnFecharMes" style="width:100%;justify-content:center;">fechar mês e investir a sobra</button>
+    </div>
+  </section>
+
+  <!-- REALIZADO -->
+  <section id="view-lancamentos" class="view">
+    <div class="month-nav">
+      <button id="realizadoPrevMonth" aria-label="mês anterior">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="month-label" id="realizadoMonthLabel">—</div>
+      <button id="realizadoNextMonth" aria-label="próximo mês">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <div class="prev-toggle" id="realizadoTypeToggle">
+      <button type="button" class="active" data-rt="despesa">despesas</button>
+      <button type="button" data-rt="receita">receitas</button>
+    </div>
+    <input type="text" id="realizadoBusca" placeholder="buscar por descrição ou categoria..." style="width:100%;padding:11px 16px;border-radius:999px;border:1.5px solid #ECE3CC;background:var(--white);font-size:14px;margin-bottom:16px;outline:none;">
+    <div class="panel" style="padding:16px 20px 4px;margin-bottom:12px;">
+      <h3 style="display:flex;justify-content:space-between;align-items:center;margin:0;">
+        <span id="realizadoListTitle">despesas realizadas por categoria</span>
+        <span id="realizadoTotal" style="font-family:'Baloo 2';font-size:18px;color:var(--muted);">R$ 0,00</span>
+      </h3>
+    </div>
+    <div id="realizadoList"></div>
+  </section>
+
+  <div class="bulk-move-bar" id="bulkMoveBar">
+    <span id="bulkMoveCount">0 selecionados</span>
+    <select id="bulkMoveCategory"></select>
+    <button type="button" id="bulkMoveBtn">mover</button>
+    <button type="button" id="bulkMoveCancel" aria-label="cancelar seleção">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+
+  <!-- CATEGORIAS -->
+  <section id="view-categorias" class="view">
+    <div class="cat-grid">
+      <div class="cat-col">
+        <h3>categorias de despesa <button class="add-cat-btn" data-t="despesa">+ nova</button></h3>
+        <div class="cat-chip-list" id="catListDespesa"></div>
+      </div>
+      <div class="cat-col">
+        <h3>categorias de receita <button class="add-cat-btn" data-t="receita">+ nova</button></h3>
+        <div class="cat-chip-list" id="catListReceita"></div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="hint"><span id="storageModeLabel">dados salvos automaticamente</span> · <button type="button" class="link-btn" id="btnBackup">exportar meus dados (.json)</button> · <button type="button" class="link-btn" id="btnLogout">sair da conta</button></footer>
+</main>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <button class="close-x" id="modalClose">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    </button>
+    <h2 id="modalTitle">novo lançamento</h2>
+    <div id="txForm">
+      <input type="hidden" id="txId">
+      <div class="field">
+        <label>tipo</label>
+        <div class="type-toggle">
+          <button type="button" class="active" data-t="despesa">despesa</button>
+          <button type="button" data-t="receita">receita</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>data</label>
+        <input type="date" id="txDate">
+      </div>
+      <div class="field">
+        <label>descrição</label>
+        <input type="text" id="txDesc" placeholder="ex: mercado do mês">
+      </div>
+      <div class="field">
+        <label>categoria</label>
+        <select id="txCategory"></select>
+      </div>
+      <div class="field">
+        <label>valor (R$)</label>
+        <input type="text" inputmode="decimal" id="txAmount" placeholder="0,00">
+      </div>
+      <div class="field">
+        <label>repetição</label>
+        <select id="txRepeat">
+          <option value="none">não repete</option>
+          <option value="weekly">repete semanalmente (12x)</option>
+          <option value="monthly">repete mensalmente (12x)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>tags (opcional)</label>
+        <input type="text" id="txTags" placeholder="ex: viagem, urgente">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="modalCancel">cancelar</button>
+        <button type="button" class="btn-primary" id="txSaveBtn">salvar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- NOVA DESPESA PREVISTA (Previsão tab) -->
+<div class="modal-overlay" id="budgetModalOverlay">
+  <div class="modal">
+    <button class="close-x" id="budgetModalClose">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    </button>
+    <h2>nova despesa prevista</h2>
+    <div id="budgetForm">
+      <div class="field" id="bVariableField" style="background:var(--cream);border-radius:var(--radius-sm);padding:12px 14px;">
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;text-transform:none;font-weight:600;color:var(--ink);font-size:13.5px;">
+          <input type="checkbox" id="bVariable" style="width:18px;height:18px;flex-shrink:0;accent-color:var(--orange);">
+          orçamento variável do mês (sem dia fixo — vai sendo consumido aos poucos, tipo Lazer ou Mercado)
+        </label>
+      </div>
+      <div class="field" id="bDateField">
+        <label>data prevista</label>
+        <input type="date" id="bDate">
+      </div>
+      <div class="field">
+        <label>categoria</label>
+        <select id="bCategory"></select>
+      </div>
+      <div class="field">
+        <label>descrição</label>
+        <input type="text" id="bDesc" placeholder="ex: netflix, aluguel...">
+      </div>
+      <div class="field">
+        <label>valor (R$)</label>
+        <input type="text" inputmode="decimal" id="bAmount" placeholder="0,00">
+      </div>
+      <div class="field">
+        <label>repetição</label>
+        <select id="bRepeatType">
+          <option value="once">cobrança única (só este mês)</option>
+          <option value="times">se repete pelos próximos meses</option>
+        </select>
+      </div>
+      <div class="field" id="bRepeatTimesField" style="display:none;">
+        <label>quantos meses (incluindo este)</label>
+        <input type="text" inputmode="numeric" id="bRepeatTimes" placeholder="3">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="budgetModalCancel">cancelar</button>
+        <button type="button" class="btn-primary" id="budgetSaveBtn">salvar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- LEMBRETE DE CONTAS DO DIA -->
+<div class="modal-overlay" id="reminderOverlay">
+  <div class="modal" style="max-width:400px;">
+    <h2>contas previstas pra hoje</h2>
+    <div id="reminderList" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;"></div>
+    <p class="dialog-msg" id="reminderTotal" style="margin:0 0 18px;"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="reminderGoMapa">ver no mapa</button>
+      <button type="button" class="btn-primary" id="reminderOk">ok, entendi</button>
+    </div>
+  </div>
+</div>
+
+<!-- DETALHES DO DIA (Mapa) com opção de marcar previsto como pago -->
+<div class="modal-overlay" id="dayDetailsOverlay">
+  <div class="modal" style="max-width:420px;">
+    <button class="close-x" id="dayDetailsClose">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    </button>
+    <h2 id="dayDetailsTitle">—</h2>
+    <div id="dayDetailsList"></div>
+    <p class="dialog-msg" id="dayDetailsTotal" style="margin:14px 0 0;"></p>
+  </div>
+</div>
+
+<!-- GENERIC DIALOG (replaces native confirm/prompt, which are blocked in this sandbox) -->
+<div class="modal-overlay" id="dialogOverlay">
+  <div class="modal" style="max-width:380px;">
+    <h2 id="dialogTitle">confirmar</h2>
+    <p class="dialog-msg" id="dialogMessage"></p>
+    <div class="field" id="dialogInputField" style="display:none;">
+      <input type="text" id="dialogInput">
+    </div>
+    <button type="button" class="btn-primary" id="dialogExtra" style="display:none;width:100%;margin-bottom:10px;">extra</button>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="dialogCancel">cancelar</button>
+      <button type="button" class="btn-primary" id="dialogOk">ok</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"><span class="dot-ok"></span><span id="toastMsg"></span><button type="button" id="toastUndo" class="toast-undo-btn">desfazer</button></div>
+
+<script src="js/config.js"></script>
+<script src="js/supabase-client.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/data-layer.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

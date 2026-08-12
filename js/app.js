@@ -1,0 +1,1563 @@
+/* ---------------- Helpers ---------------- */
+function parseAmount(raw){
+  if(raw==null) return NaN;
+  let s = String(raw).trim();
+  if(s==='') return NaN;
+  if(s.includes(',') && s.includes('.')){
+    s = s.replace(/\./g,'').replace(',', '.');
+  } else if(s.includes(',')){
+    s = s.replace(',', '.');
+  }
+  return parseFloat(s);
+}
+
+/* ---------------- Storage mode ----------------
+   Agora sempre "nuvem de verdade": Supabase, com autenticação por usuário.
+   As funções de load/persist abaixo chamam data-layer.js, que conversa
+   com o banco (ver js/data-layer.js e supabase-schema/schema.sql). */
+(function(){
+  const el = document.getElementById('storageModeLabel');
+  if(el) el.textContent = 'dados salvos na sua conta (Supabase)';
+})();
+
+/* ---------------- Generic Dialog (replaces confirm/prompt) ---------------- */
+let dialogResolve = null;
+const dlgOverlay = document.getElementById('dialogOverlay');
+const dlgInputField = document.getElementById('dialogInputField');
+const dlgInput = document.getElementById('dialogInput');
+function showDialog({title, message, withInput=false, defaultValue='', okLabel='ok', extraLabel=null}){
+  return new Promise(resolve=>{
+    dialogResolve = resolve;
+    document.getElementById('dialogTitle').textContent = title;
+    document.getElementById('dialogMessage').textContent = message;
+    document.getElementById('dialogOk').textContent = okLabel;
+    const extraBtn = document.getElementById('dialogExtra');
+    if(extraLabel){
+      extraBtn.textContent = extraLabel;
+      extraBtn.style.display = 'block';
+    } else {
+      extraBtn.style.display = 'none';
+    }
+    if(withInput){
+      dlgInputField.style.display='block';
+      dlgInput.value = defaultValue;
+      setTimeout(()=>{ dlgInput.focus(); dlgInput.select(); }, 60);
+    } else {
+      dlgInputField.style.display='none';
+    }
+    dlgOverlay.classList.add('open');
+  });
+}
+function resolveDialog(val){
+  dlgOverlay.classList.remove('open');
+  if(dialogResolve){ dialogResolve(val); dialogResolve=null; }
+}
+document.getElementById('dialogExtra').addEventListener('click', ()=> resolveDialog('extra'));
+document.getElementById('dialogCancel').addEventListener('click', ()=> resolveDialog(null));
+document.getElementById('dialogOk').addEventListener('click', ()=>{
+  const withInput = dlgInputField.style.display!=='none';
+  if(withInput){ const v = dlgInput.value.trim(); resolveDialog(v?v:null); }
+  else resolveDialog(true);
+});
+dlgOverlay.addEventListener('click', (e)=>{ if(e.target===dlgOverlay) resolveDialog(null); });
+dlgInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); document.getElementById('dialogOk').click(); } });
+
+/* ---------------- App state ---------------- */
+let state = {
+  transactions: [],
+  categories: { despesa: [], receita: [] },
+  investedBase: 0,
+  budgetItems: [],    // [{ id, category, desc, amount, month:"YYYY-MM", seriesId, seriesIndex, seriesTotal }]
+  closedMonths: [],    // ["YYYY-MM", ...] months already closed via "fechar mês"
+  saldoInicialOverrides: {}, // { "YYYY-MM": number } — manual override for the Mapa's day-1 saldo inicial
+  dismissedReminders: []     // ["YYYY-MM-DD", ...] days whose bill reminder popup was already dismissed
+};
+let currentMonth; // "YYYY-MM"
+let saldosMonth; // "YYYY-MM" — independent month cursor for the Saldos tab
+let previsaoMonth; // "YYYY-MM" — independent month cursor for the Previsão tab
+let previsaoType = 'despesa'; // 'despesa' | 'receita' — which list the Previsão tab is showing
+let receitaCardMode = 'realizado'; // 'realizado' | 'previsto' — which value the dashboard's receitas card shows
+let economiaCardMode = 'realizado'; // 'realizado' | 'previsto' — which value the dashboard's economia card shows
+let realizadoMonth; // "YYYY-MM" — independent month cursor for the Realizado tab
+let realizadoType = 'despesa'; // 'despesa' | 'receita' — which list the Realizado tab is showing
+let selectedTxIds = new Set(); // ids currently checked for bulk category move in Realizado
+let editingId = null;
+let modalType = 'despesa';
+let pieChart = null, barChart = null;
+
+const PALETTE = ['#F4622C','#4B21C4','#1F8C4C','#C9A227','#D45B90','#2E7BBF','#8B5E3C','#3FA796','#B23A48','#6C5CE7','#E08E45','#2F6B4F','#9B5DE5','#D8A048','#5E8C61','#C4497A'];
+function colorFor(name){
+  let h = 0;
+  for(let i=0;i<name.length;i++){ h = (h*31 + name.charCodeAt(i)) >>> 0; }
+  return PALETTE[h % PALETTE.length];
+}
+function fmtBRL(v){
+  return (v<0?'-':'') + Math.abs(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+}
+function fmtDate(iso){
+  const [y,m,d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+function monthLabelOf(ym){
+  const [y,m] = ym.split('-').map(Number);
+  const names = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  return `${names[m-1]} de ${y}`;
+}
+function todayISO(){
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function addDays(dateStr, n){
+  const d = new Date(dateStr+'T00:00:00');
+  d.setDate(d.getDate()+n);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function addMonths(dateStr, n){
+  const [y,m,day] = dateStr.split('-').map(Number);
+  const target = new Date(y, (m-1)+n, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth()+1, 0).getDate();
+  const finalDay = Math.min(day, lastDay);
+  return target.getFullYear()+'-'+String(target.getMonth()+1).padStart(2,'0')+'-'+String(finalDay).padStart(2,'0');
+}
+
+/* ---------------- Storage ---------------- */
+async function loadState(){
+  const data = await loadAllData();
+  state.categories = data.categories;
+  state.transactions = data.transactions;
+  state.budgetItems = data.budgetItems;
+  state.investedBase = data.investedBase;
+  state.saldoInicialOverrides = data.saldoInicialOverrides;
+  state.closedMonths = data.closedMonths;
+  state.dismissedReminders = data.dismissedReminders;
+  // snapshots usados pela sincronização incremental (diff) com o Supabase,
+  // ver persistTx()/persistBudgetItems() logo abaixo
+  lastSyncedTransactions = JSON.parse(JSON.stringify(state.transactions));
+  lastSyncedBudgetItems = JSON.parse(JSON.stringify(state.budgetItems));
+}
+
+// -----------------------------------------------------------------------
+// Sincronização incremental: em vez de reenviar o array inteiro a cada
+// mudança (como no protótipo em localStorage), comparamos com a última
+// versão sincronizada e mandamos pro Supabase só o que de fato mudou
+// (criar/atualizar/excluir linhas específicas).
+// -----------------------------------------------------------------------
+let lastSyncedTransactions = [];
+let lastSyncedBudgetItems = [];
+
+async function persistTx(){
+  try{
+    const oldById = new Map(lastSyncedTransactions.map(t=>[t.id, t]));
+    const newIds = new Set(state.transactions.map(t=>t.id));
+    for(const [id] of oldById){
+      if(!newIds.has(id)) await dbDeleteTransaction(id);
+    }
+    for(const tx of state.transactions){
+      const old = oldById.get(tx.id);
+      if(!old){
+        tx.id = await dbCreateTransaction(tx);
+      } else if(JSON.stringify(old)!==JSON.stringify(tx)){
+        await dbUpdateTransaction(tx.id, tx);
+      }
+    }
+    lastSyncedTransactions = JSON.parse(JSON.stringify(state.transactions));
+  }catch(e){ showToast('erro ao salvar dados: '+(e.message||'tente novamente')); }
+}
+
+async function persistBudgetItems(){
+  try{
+    const oldById = new Map(lastSyncedBudgetItems.map(b=>[b.id, b]));
+    const newIds = new Set(state.budgetItems.map(b=>b.id));
+    for(const [id] of oldById){
+      if(!newIds.has(id)) await dbDeleteBudgetItem(id);
+    }
+    for(const item of state.budgetItems){
+      const old = oldById.get(item.id);
+      if(!old){
+        item.id = await dbCreateBudgetItem(item);
+      } else if(JSON.stringify(old)!==JSON.stringify(item)){
+        await dbUpdateBudgetItem(item.id, item);
+      }
+    }
+    lastSyncedBudgetItems = JSON.parse(JSON.stringify(state.budgetItems));
+  }catch(e){ showToast('erro ao salvar previsão: '+(e.message||'tente novamente')); }
+}
+
+// Criação/renomeação/exclusão de categoria são feitas direto contra o banco
+// (dbCreateCategory / dbRenameCategory / dbDeleteCategory) nos pontos onde
+// acontecem — esta função só resincroniza a lista local depois.
+async function persistCats(){
+  try{ state.categories = await dbListCategories(); }
+  catch(e){ showToast('erro ao sincronizar categorias'); }
+}
+async function persistSaldoInicialOverrides(){
+  try{ state.saldoInicialOverrides = await dbListSaldoInicialOverrides(); }
+  catch(e){ showToast('erro ao salvar saldo inicial'); }
+}
+async function persistClosedMonths(){
+  try{ state.closedMonths = await dbListClosedMonths(); }
+  catch(e){ showToast('erro ao salvar fechamento'); }
+}
+async function persistDismissedReminders(){
+  try{ state.dismissedReminders = await dbListDismissedReminders(); }
+  catch(e){ /* não crítico */ }
+}
+async function persistAll(){
+  await persistCats();
+  await persistTx();
+  await persistBudgetItems();
+}
+
+/* ---------------- Toast ---------------- */
+let toastTimer = null;
+let lastSnapshot = null; // one-level undo: full state snapshot taken right before the last mutating action
+function snapshotState(){
+  return JSON.parse(JSON.stringify({
+    transactions: state.transactions,
+    categories: state.categories,
+    budgetItems: state.budgetItems,
+    investedBase: state.investedBase,
+    closedMonths: state.closedMonths,
+    saldoInicialOverrides: state.saldoInicialOverrides
+  }));
+}
+function pushUndo(){
+  lastSnapshot = snapshotState();
+}
+async function undoLastAction(){
+  if(!lastSnapshot) return;
+  // NOTA: desfazer transações e itens de previsão funciona corretamente
+  // (persistTx/persistBudgetItems fazem diff contra o Supabase e revertem
+  // certinho). Desfazer criar/renomear/excluir CATEGORIA ainda não reverte
+  // no banco — essas ações já commitam direto via dbCreateCategory/
+  // dbRenameCategory/dbDeleteCategory no momento em que acontecem. Se for
+  // um problema real no uso, dá pra resolver guardando a operação inversa
+  // específica de categoria no lugar de restaurar snapshot.
+  const snap = lastSnapshot;
+  state.transactions = snap.transactions;
+  state.categories = snap.categories;
+  state.budgetItems = snap.budgetItems;
+  state.investedBase = snap.investedBase;
+  state.closedMonths = snap.closedMonths;
+  state.saldoInicialOverrides = snap.saldoInicialOverrides;
+  lastSnapshot = null;
+  await persistAll();
+  renderDashboard();
+  renderRealizado();
+  renderCategorias();
+  renderSaldos();
+  renderPrevisao();
+  if(dayDetailsState) renderDayDetailsModal(dayDetailsState.dateStr, dayDetailsState.type);
+  document.getElementById('toast').classList.remove('show');
+  showToast('tintin! ação desfeita');
+}
+function showToast(msg, withUndo){
+  const t = document.getElementById('toast');
+  document.getElementById('toastMsg').textContent = msg;
+  const undoBtn = document.getElementById('toastUndo');
+  undoBtn.classList.toggle('show', !!(withUndo && lastSnapshot));
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>t.classList.remove('show'), withUndo?6500:4000);
+}
+document.getElementById('toastUndo').addEventListener('click', undoLastAction);
+window.addEventListener('error', (e)=>{
+  showToast('erro: ' + (e.message || 'algo deu errado nesta ação'));
+});
+window.addEventListener('unhandledrejection', (e)=>{
+  const m = (e.reason && e.reason.message) ? e.reason.message : String(e.reason);
+  showToast('erro: ' + m);
+});
+
+/* ---------------- Tabs ---------------- */
+document.querySelectorAll('.tab').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('view-'+btn.dataset.tab).classList.add('active');
+    if(btn.dataset.tab==='lancamentos') renderRealizado();
+    if(btn.dataset.tab==='categorias') renderCategorias();
+    if(btn.dataset.tab==='dashboard') renderDashboard();
+    if(btn.dataset.tab==='saldos') renderSaldos();
+    if(btn.dataset.tab==='previsao') renderPrevisao();
+  });
+});
+
+/* ---------------- Dashboard ---------------- */
+function allMonthsSorted(){
+  const set = new Set(state.transactions.map(t=>t.date.slice(0,7)));
+  set.add(currentMonth);
+  return Array.from(set).sort();
+}
+function shiftMonth(ym, delta){
+  let [y,m] = ym.split('-').map(Number);
+  m += delta;
+  while(m>12){m-=12;y++;}
+  while(m<1){m+=12;y--;}
+  return y+'-'+String(m).padStart(2,'0');
+}
+document.getElementById('prevMonth').addEventListener('click', ()=>{ currentMonth = shiftMonth(currentMonth,-1); renderDashboard(); });
+document.getElementById('nextMonth').addEventListener('click', ()=>{ currentMonth = shiftMonth(currentMonth,1); renderDashboard(); });
+
+const RENDIMENTO_AUTO_CUTOFF = '2026-08-01'; // Rendimento antes disso já está embutido no investedBase corrigido; só conta automático a partir daqui
+function computeValorInvestido(){
+  const today = todayISO();
+  let v = state.investedBase || 0;
+  state.transactions.forEach(t=>{
+    if(t.category==='Investimento' && t.date<=today){
+      v += (t.type==='despesa' ? t.amount : -t.amount);
+    }
+    if(t.category==='Rendimento' && t.type==='receita' && t.date<=today && t.date>=RENDIMENTO_AUTO_CUTOFF){
+      v += t.amount;
+    }
+  });
+  return v;
+}
+function txForMonth(ym){
+  return state.transactions.filter(t=>t.date.slice(0,7)===ym);
+}
+function computeSaldoInicialDoMes(ym){
+  const auto = computeBudgetTotal(ym, 'despesa');
+  return (state.saldoInicialOverrides[ym] != null) ? state.saldoInicialOverrides[ym] : auto;
+}
+function computeSaidasReaisDoMes(ym){
+  return txForMonth(ym).filter(t=>t.type==='despesa' && t.category!=='Investimento').reduce((s,t)=>s+t.amount,0);
+}
+function computeReceitasReaisDoMes(ym){
+  return txForMonth(ym).filter(t=>t.type==='receita' && t.category!=='Investimento').reduce((s,t)=>s+t.amount,0);
+}
+function computeOverrunDoMes(ym){
+  const saidas = computeSaidasReaisDoMes(ym);
+  const inicial = computeSaldoInicialDoMes(ym);
+  return Math.max(0, saidas - inicial);
+}
+function computeBudgetTotal(ym, type='despesa'){
+  return state.budgetItems.filter(b=>b.month===ym && (b.type||'despesa')===type).reduce((s,b)=>s+b.amount,0);
+}
+function computeSaldoDisponivel(ym){
+  const despesas = txForMonth(ym).filter(t=>t.type==='despesa' && t.category!=='Investimento').reduce((s,t)=>s+t.amount,0);
+  const previsto = computeBudgetTotal(ym);
+  return previsto - despesas;
+}
+document.querySelectorAll('#receitaModeToggle button').forEach(btn=>{
+  btn.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    receitaCardMode = btn.dataset.rm;
+    renderDashboard();
+  });
+});
+document.querySelectorAll('#economiaModeToggle button').forEach(btn=>{
+  btn.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    economiaCardMode = btn.dataset.em;
+    renderDashboard();
+  });
+});
+function renderDashboard(){
+  document.getElementById('monthLabel').textContent = monthLabelOf(currentMonth);
+  const monthTx = txForMonth(currentMonth);
+  const monthTxReal = monthTx.filter(t=>t.category!=='Investimento');
+  const receitas = monthTxReal.filter(t=>t.type==='receita').reduce((s,t)=>s+t.amount,0);
+  const despesas = monthTxReal.filter(t=>t.type==='despesa').reduce((s,t)=>s+t.amount,0);
+
+  document.getElementById('statInvestido').textContent = fmtBRL(computeValorInvestido());
+  const receitasPrevistas = computeBudgetTotal(currentMonth, 'receita');
+  const statReceitaEl = document.getElementById('statReceita');
+  if(receitaCardMode==='previsto'){
+    statReceitaEl.textContent = receitasPrevistas>0 ? fmtBRL(receitasPrevistas) : 'sem previsão';
+  } else {
+    statReceitaEl.textContent = fmtBRL(receitas);
+  }
+  document.querySelectorAll('#receitaModeToggle button').forEach(b=>b.classList.toggle('active', b.dataset.rm===receitaCardMode));
+
+  // saldo em conta: total da previsão do mês (ou override manual)
+  const previstoMes = computeSaldoInicialDoMes(currentMonth);
+  const saldoContaEl = document.getElementById('statSaldoConta');
+  saldoContaEl.textContent = previstoMes>0 ? fmtBRL(previstoMes) : 'sem previsão';
+
+  // gasto realizado: despesas reais do mês, com % do saldo em conta usado no tooltip
+  const despEl = document.getElementById('statDespesa');
+  const despSubEl = document.getElementById('statDespesaSub');
+  despEl.textContent = fmtBRL(despesas);
+  if(previstoMes>0){
+    const pct = Math.round(despesas/previstoMes*100);
+    despEl.className = 'stat-value ' + (despesas>previstoMes ? 'neg' : '');
+    despSubEl.textContent = `${pct}% do saldo em conta (${fmtBRL(previstoMes)}) usado`;
+  } else {
+    despEl.className = 'stat-value';
+    despSubEl.textContent = 'sem previsão cadastrada para este mês';
+  }
+
+  // economia do mês: receita líquida (descontando estouro e o Rendimento, que já vai automático pro investido) - previsão do mês seguinte
+  const nextMonth = shiftMonth(currentMonth, 1);
+  const previstoProximo = computeBudgetTotal(nextMonth, 'despesa');
+  document.getElementById('statPrevistoProximo').textContent = previstoProximo>0 ? fmtBRL(previstoProximo) : 'sem previsão';
+  const overrun = computeOverrunDoMes(currentMonth);
+  const rendimentoReal = monthTxReal.filter(t=>t.type==='receita' && t.category==='Rendimento').reduce((s,t)=>s+t.amount,0);
+  const receitasSemRendimento = receitas - rendimentoReal;
+  const receitaLiquida = receitasSemRendimento - overrun;
+  const economiaReal = receitaLiquida - previstoProximo;
+  const receitasPrevistasMes = computeBudgetTotal(currentMonth, 'receita');
+  const rendimentoPrevisto = state.budgetItems.filter(b=>b.month===currentMonth && (b.type||'despesa')==='receita' && b.category==='Rendimento').reduce((s,b)=>s+b.amount,0);
+  const receitasPrevistasSemRendimento = receitasPrevistasMes - rendimentoPrevisto;
+  const economiaPrevista = receitasPrevistasSemRendimento - previstoProximo;
+  const ecoEl = document.getElementById('statEconomia');
+  const ecoSubEl = document.getElementById('statEconomiaSub');
+  document.querySelectorAll('#economiaModeToggle button').forEach(b=>b.classList.toggle('active', b.dataset.em===economiaCardMode));
+  if(economiaCardMode==='previsto'){
+    if(receitasPrevistasMes>0 && previstoProximo>0){
+      ecoEl.textContent = fmtBRL(economiaPrevista);
+      ecoEl.className = 'stat-value ' + (economiaPrevista>=0?'pos':'neg');
+      ecoSubEl.innerHTML = `(Receita, sem rendimento): ${fmtBRL(receitasPrevistasSemRendimento)}`
+        + (rendimentoPrevisto>0 ? `<br>(Rendimento → investido): ${fmtBRL(rendimentoPrevisto)}` : '')
+        + `<br>(Previsão de ${monthLabelOf(nextMonth)}): −${fmtBRL(previstoProximo)}`;
+    } else {
+      ecoEl.textContent = 'sem previsão';
+      ecoEl.className = 'stat-value';
+      ecoSubEl.textContent = `cadastre a previsão de receita deste mês e de despesa de ${monthLabelOf(nextMonth)} pra ver este número`;
+    }
+  } else {
+    ecoEl.textContent = fmtBRL(economiaReal);
+    ecoEl.className = 'stat-value ' + (economiaReal>=0?'pos':'neg');
+    ecoSubEl.innerHTML = `(Receita, sem rendimento): ${fmtBRL(receitasSemRendimento)}`
+      + (rendimentoReal>0 ? `<br>(Rendimento → investido): ${fmtBRL(rendimentoReal)}` : '')
+      + (overrun>0 ? `<br>(Estouro do pote): −${fmtBRL(overrun)}` : '')
+      + (previstoProximo>0 ? `<br>(Previsão de ${monthLabelOf(nextMonth)}): −${fmtBRL(previstoProximo)}` : `<br>cadastre a previsão de ${monthLabelOf(nextMonth)} pra este número fazer sentido`);
+  }
+
+  const previsaoItems = state.budgetItems.filter(b=>b.month===currentMonth).map(b=>({category:b.category, amount:b.amount, type:'despesa'}));
+  document.getElementById('pieTitleDespesa').textContent = previsaoItems.length ? 'despesas previstas por categoria' : 'despesas por categoria';
+  renderPie(previsaoItems.length ? previsaoItems : monthTxReal);
+  renderPieReceita(monthTxReal);
+  renderBar();
+}
+
+let pieChartReceita = null;
+function renderPieChart(monthTx, type, canvasId, wrapId, legendId, emptyMsg){
+  const filtered = monthTx.filter(t=>t.type===type);
+  const byCat = {};
+  filtered.forEach(t=>{ byCat[t.category] = (byCat[t.category]||0) + t.amount; });
+  const entries = Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
+  const wrap = document.getElementById(wrapId);
+  const legend = document.getElementById(legendId);
+  if(entries.length===0){
+    wrap.innerHTML = `<div class="empty">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#C9C2AA" stroke-width="2"/><path d="M9 10h.01M15 10h.01M8 15c1 1.2 2.4 2 4 2s3-.8 4-2" stroke="#C9C2AA" stroke-width="2" stroke-linecap="round"/></svg>
+      ${emptyMsg}</div>`;
+    legend.innerHTML = '';
+    return null;
+  }
+  if(!wrap.querySelector('canvas')) wrap.innerHTML = `<canvas id="${canvasId}"></canvas>`;
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  const labels = entries.map(e=>e[0]);
+  const data = entries.map(e=>e[1]);
+  const colors = labels.map(colorFor);
+  const chart = new Chart(ctx, {
+    type:'doughnut',
+    data:{ labels, datasets:[{ data, backgroundColor:colors, borderWidth:2, borderColor:'#fff' }] },
+    options:{ cutout:'62%', plugins:{ legend:{ display:false }, tooltip:{ callbacks:{ label:(c)=> c.label+': '+fmtBRL(c.raw) } } }, maintainAspectRatio:false }
+  });
+  legend.innerHTML = entries.slice(0,6).map(([name,val])=>`
+    <div class="legend-row">
+      <span class="legend-dot" style="background:${colorFor(name)}"></span>
+      <span class="name">${name}</span>
+      <span class="val">${fmtBRL(val)}</span>
+    </div>`).join('');
+  return chart;
+}
+function renderPie(monthTx){
+  if(pieChart) pieChart.destroy();
+  pieChart = renderPieChart(monthTx, 'despesa', 'pieChart', 'pieWrap', 'pieLegend', 'nenhuma despesa neste mês');
+}
+function renderPieReceita(monthTx){
+  if(pieChartReceita) pieChartReceita.destroy();
+  pieChartReceita = renderPieChart(monthTx, 'receita', 'pieChartReceita', 'pieWrapReceita', 'pieLegendReceita', 'nenhuma receita neste mês');
+}
+
+/* ---------------- Relatório PDF ---------------- */
+async function gerarRelatorioPDF(){
+  try{
+    if(!window.jspdf){ showToast('erro: biblioteca de PDF não carregou (verifique sua conexão)'); return; }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({unit:'mm', format:'a4'});
+    let y = 40;
+
+    // header band
+    doc.setFillColor(16,35,26);
+    doc.rect(0,0,210,28,'F');
+    doc.setTextColor(198,241,53);
+    doc.setFont('helvetica','bold'); doc.setFontSize(18);
+    doc.text('tintin.', 14, 18);
+    doc.setTextColor(246,238,220);
+    doc.setFont('helvetica','normal'); doc.setFontSize(11);
+    doc.text(`relatório mensal — ${monthLabelOf(currentMonth)}`, 14, 24);
+
+    const monthTx = txForMonth(currentMonth);
+    const monthTxReal = monthTx.filter(t=>t.category!=='Investimento');
+    const receitas = monthTxReal.filter(t=>t.type==='receita').reduce((s,t)=>s+t.amount,0);
+    const despesas = monthTxReal.filter(t=>t.type==='despesa').reduce((s,t)=>s+t.amount,0);
+    const previstoMes = computeSaldoInicialDoMes(currentMonth);
+    const valorInvestido = computeValorInvestido();
+    const overrun = computeOverrunDoMes(currentMonth);
+    const nextMonth = shiftMonth(currentMonth,1);
+    const previstoProximo = computeBudgetTotal(nextMonth, 'despesa');
+    const receitaLiquida = receitas - overrun;
+    const economia = receitaLiquida - previstoProximo;
+
+    doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(16,35,26);
+    doc.text('resumo geral', 14, y); y+=6;
+    doc.setDrawColor(230,220,190); doc.line(14,y,196,y); y+=6;
+
+    const rows = [
+      ['valor investido (total)', fmtBRL(valorInvestido)],
+      ['receita do mês', fmtBRL(receitas)],
+      ['saldo em conta (previsto)', previstoMes>0?fmtBRL(previstoMes):'sem previsão'],
+      ['gasto realizado', fmtBRL(despesas) + (previstoMes>0?`  (${Math.round(despesas/previstoMes*100)}% do previsto)`:'')],
+      ['economia do mês', fmtBRL(economia)]
+    ];
+    doc.setFont('helvetica','normal'); doc.setFontSize(11);
+    rows.forEach(([label,val])=>{
+      doc.setTextColor(107,117,104); doc.text(label, 14, y);
+      doc.setTextColor(16,35,26); doc.setFont('helvetica','bold'); doc.text(val, 196, y, {align:'right'});
+      doc.setFont('helvetica','normal');
+      y += 7;
+    });
+
+    y += 3;
+    doc.setFont('helvetica','bold'); doc.setFontSize(10.5);
+    if(overrun>0){
+      doc.setTextColor(217,73,26);
+      doc.text(`estourou o saldo em conta em ${fmtBRL(overrun)}`, 14, y);
+    } else if(previstoMes>0){
+      doc.setTextColor(31,140,76);
+      doc.text('dentro do previsto', 14, y);
+    } else {
+      doc.setTextColor(150,150,140);
+      doc.text('sem previsão cadastrada pra este mês', 14, y);
+    }
+    y += 12;
+
+    const previsaoItems = state.budgetItems.filter(b=>b.month===currentMonth && (b.type||'despesa')==='despesa');
+    const despesaSource = previsaoItems.length ? previsaoItems : monthTxReal.filter(t=>t.type==='despesa');
+    const despByCat = {};
+    despesaSource.forEach(t=>{ despByCat[t.category] = (despByCat[t.category]||0)+t.amount; });
+    const despEntries = Object.entries(despByCat).sort((a,b)=>b[1]-a[1]);
+    const despTotal = despEntries.reduce((s,[,v])=>s+v,0);
+
+    doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(16,35,26);
+    doc.text(`despesas por categoria${previsaoItems.length?' (previsto)':''}`, 14, y); y+=6;
+    doc.setDrawColor(230,220,190); doc.line(14,y,196,y); y+=6;
+    doc.setFont('helvetica','normal'); doc.setFontSize(10.5);
+    if(despEntries.length===0){
+      doc.setTextColor(150,150,140); doc.text('nenhuma despesa neste mês', 14, y); y+=8;
+    }
+    despEntries.forEach(([cat,val])=>{
+      if(y>270){ doc.addPage(); y=20; }
+      doc.setTextColor(60,60,55); doc.text(cat, 14, y);
+      const pct = despTotal>0 ? Math.round(val/despTotal*100) : 0;
+      doc.setTextColor(16,35,26); doc.text(`${fmtBRL(val)}  (${pct}%)`, 196, y, {align:'right'});
+      y += 6.5;
+    });
+    y += 8;
+
+    const receitaSource = monthTxReal.filter(t=>t.type==='receita');
+    const recByCat = {};
+    receitaSource.forEach(t=>{ recByCat[t.category] = (recByCat[t.category]||0)+t.amount; });
+    const recEntries = Object.entries(recByCat).sort((a,b)=>b[1]-a[1]);
+    if(y>250){ doc.addPage(); y=20; }
+    doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(16,35,26);
+    doc.text('receitas por categoria', 14, y); y+=6;
+    doc.setDrawColor(230,220,190); doc.line(14,y,196,y); y+=6;
+    doc.setFont('helvetica','normal'); doc.setFontSize(10.5);
+    if(recEntries.length===0){
+      doc.setTextColor(150,150,140); doc.text('nenhuma receita neste mês', 14, y); y+=8;
+    }
+    recEntries.forEach(([cat,val])=>{
+      if(y>270){ doc.addPage(); y=20; }
+      doc.setTextColor(60,60,55); doc.text(cat, 14, y);
+      doc.setTextColor(16,35,26); doc.text(fmtBRL(val), 196, y, {align:'right'});
+      y += 6.5;
+    });
+
+    doc.setFontSize(8); doc.setTextColor(160,160,150);
+    doc.text(`gerado em ${new Date().toLocaleString('pt-BR')}`, 14, 290);
+
+    const pdfBlob = doc.output('blob');
+    const pdfUrl = URL.createObjectURL(pdfBlob);
+    const a = document.createElement('a');
+    a.href = pdfUrl;
+    a.download = `tintin-relatorio-${currentMonth}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(pdfUrl), 2000);
+    showToast('tintin! relatório PDF gerado');
+  }catch(err){
+    showToast('erro ao gerar PDF: '+(err && err.message ? err.message : 'tente novamente'));
+  }
+}
+document.getElementById('btnGerarPDF').addEventListener('click', gerarRelatorioPDF);
+
+function renderBar(){
+  const months = [];
+  let m = currentMonth;
+  for(let i=0;i<6;i++){ months.unshift(m); m = shiftMonth(m,-1); }
+  const receitas = months.map(ym=> txForMonth(ym).filter(t=>t.type==='receita' && t.category!=='Investimento').reduce((s,t)=>s+t.amount,0));
+  const despesas = months.map(ym=> txForMonth(ym).filter(t=>t.type==='despesa' && t.category!=='Investimento').reduce((s,t)=>s+t.amount,0));
+  const ctx = document.getElementById('barChart').getContext('2d');
+  if(barChart) barChart.destroy();
+  barChart = new Chart(ctx, {
+    type:'bar',
+    data:{
+      labels: months.map(ym=>monthLabelOf(ym).split(' de ')[0].slice(0,3)),
+      datasets:[
+        { label:'receitas', data:receitas, backgroundColor:'#8FE0A8', borderRadius:8, maxBarThickness:34 },
+        { label:'despesas', data:despesas, backgroundColor:'#F4622C', borderRadius:8, maxBarThickness:34 }
+      ]
+    },
+    options:{
+      maintainAspectRatio:false,
+      plugins:{ legend:{ position:'bottom', labels:{ usePointStyle:true, boxWidth:8, font:{family:'Inter'} } } },
+      scales:{ y:{ ticks:{ callback:(v)=> 'R$'+v/1000+'k' }, grid:{ color:'#F0EAD9' } }, x:{ grid:{ display:false } } }
+    }
+  });
+}
+
+/* ---------------- Saldos ---------------- */
+function daysInMonth(ym){
+  const [y,m] = ym.split('-').map(Number);
+  return new Date(y, m, 0).getDate();
+}
+document.getElementById('saldosPrevMonth').addEventListener('click', ()=>{ saldosMonth = shiftMonth(saldosMonth,-1); renderSaldos(); });
+document.getElementById('saldosNextMonth').addEventListener('click', ()=>{ saldosMonth = shiftMonth(saldosMonth,1); renderSaldos(); });
+
+function renderSaldos(){
+  document.getElementById('saldosMonthLabel').textContent = monthLabelOf(saldosMonth);
+  const nDays = daysInMonth(saldosMonth);
+  const today = todayISO();
+  const autoInitial = computeBudgetTotal(saldosMonth, 'despesa');
+  const hasOverride = state.saldoInicialOverrides[saldosMonth] != null;
+  const initial = hasOverride ? state.saldoInicialOverrides[saldosMonth] : autoInitial;
+  const temPrevisaoDespesa = autoInitial>0;
+  const temPrevisaoReceita = computeBudgetTotal(saldosMonth, 'receita')>0;
+  let saldoInicialDia = initial, totalEntradas = 0, totalSaidas = 0, running = initial;
+  const rowsHtml = [];
+  for(let d=1; d<=nDays; d++){
+    const dateStr = saldosMonth+'-'+String(d).padStart(2,'0');
+    const dayTx = state.transactions.filter(t=>t.date===dateStr && t.category!=='Investimento');
+    const entradasReais = dayTx.filter(t=>t.type==='receita').reduce((s,t)=>s+t.amount,0);
+    const entradasPrevistas = state.budgetItems.filter(b=>b.date===dateStr && (b.type||'despesa')==='receita' && !b.paid && !b.variable).reduce((s,b)=>s+b.amount,0);
+    const entradas = entradasReais + entradasPrevistas;
+    const saidasReais = dayTx.filter(t=>t.type==='despesa').reduce((s,t)=>s+t.amount,0);
+    const saidasPrevistas = state.budgetItems.filter(b=>b.date===dateStr && (b.type||'despesa')==='despesa' && !b.paid && !b.variable).reduce((s,b)=>s+b.amount,0);
+    const saidas = saidasReais + saidasPrevistas;
+    const saldoDoDia = saldoInicialDia + entradas - saidas;
+    totalEntradas += entradas; totalSaidas += saidas;
+    const isToday = dateStr===today;
+    let saldoClass;
+    if(saldoDoDia<0) saldoClass = 'saldo-neg';
+    else if(saldoDoDia<1000) saldoClass = 'saldo-medio';
+    else saldoClass = 'saldo-alto';
+    const saidasLabel = saidas>0
+      ? `<span class="saidas-previsto" onclick="showDayDetails('${dateStr}','despesa')">${fmtBRL(saidas)}</span>${(saidasPrevistas>0 && saidasReais===0)?' <span class="muted-tag">(previsto)</span>':''}`
+      : '—';
+    const entradasLabel = entradas>0
+      ? `<span class="entradas-clicavel" onclick="showDayDetails('${dateStr}','receita')">${fmtBRL(entradas)}</span>${(entradasPrevistas>0 && entradasReais===0)?' <span class="muted-tag">(previsto)</span>':''}`
+      : '—';
+    const saldoInicialCell = d===1
+      ? `<div style="display:flex;align-items:center;gap:6px;">
+          <input type="text" inputmode="decimal" class="saldo-inicial-input" data-month="${saldosMonth}" value="${initial.toFixed(2).replace('.', ',')}">
+          ${hasOverride ? `<button type="button" class="icon-btn" onclick="resetSaldoInicial('${saldosMonth}')" aria-label="voltar ao valor automático" title="voltar ao automático (previsão)">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 4v6h6M20 20v-6h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.5 15a8 8 0 0 0 14.5 3M19.5 9A8 8 0 0 0 5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>` : ''}
+        </div>`
+      : '—';
+    rowsHtml.push(`<tr class="${isToday?'row-today':''}">
+      <td>${String(d).padStart(2,'0')}</td>
+      <td class="saldo-inicial-cell">${saldoInicialCell}</td>
+      <td class="${entradas>0?'amt receita':'empty-cell'}">${entradasLabel}</td>
+      <td class="${saidas>0?'amt despesa':'empty-cell'}">${saidasLabel}</td>
+      <td class="saldo-cell ${saldoClass}">${fmtBRL(saldoDoDia)}</td>
+      <td>
+        <button class="icon-btn" onclick="openNewForDate('${dateStr}')" aria-label="adicionar lançamento neste dia">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+        </button>
+      </td>
+    </tr>`);
+    saldoInicialDia = saldoDoDia;
+  }
+  running = saldoInicialDia;
+  document.getElementById('saldosTableBody').innerHTML = rowsHtml.join('');
+  document.getElementById('saldosTableFoot').innerHTML = `
+    <tr>
+      <td><strong>total</strong></td>
+      <td class="saldo-inicial-cell">${fmtBRL(initial)}</td>
+      <td class="amt receita">${fmtBRL(totalEntradas)}</td>
+      <td class="amt despesa">${fmtBRL(totalSaidas)}</td>
+      <td class="saldo-cell">${fmtBRL(running)}</td>
+      <td></td>
+    </tr>`;
+}
+document.getElementById('saldosTableBody').addEventListener('change', async (e)=>{
+  if(!e.target.classList.contains('saldo-inicial-input')) return;
+  const month = e.target.dataset.month;
+  const val = parseAmount(e.target.value);
+  if(isNaN(val)){
+    showToast('valor inválido — mantendo o anterior');
+    renderSaldos();
+    return;
+  }
+  pushUndo();
+  state.saldoInicialOverrides[month] = val;
+  try{ await dbSetSaldoInicialOverride(month, val); }catch(err){ showToast('erro ao salvar: '+(err.message||'')); }
+  await persistSaldoInicialOverrides();
+  renderSaldos();
+  showToast('tintin! saldo inicial atualizado', true);
+});
+document.getElementById('saldosTableBody').addEventListener('keydown', (e)=>{
+  if(e.target.classList.contains('saldo-inicial-input') && e.key==='Enter'){
+    e.preventDefault();
+    e.target.blur();
+  }
+});
+window.resetSaldoInicial = async function(month){
+  pushUndo();
+  delete state.saldoInicialOverrides[month];
+  try{ await dbDeleteSaldoInicialOverride(month); }catch(err){ showToast('erro ao resetar: '+(err.message||'')); }
+  await persistSaldoInicialOverrides();
+  renderSaldos();
+  showToast('saldo inicial voltou a ser calculado pela previsão', true);
+};
+const dayDetailsOverlay = document.getElementById('dayDetailsOverlay');
+let dayDetailsState = null; // {dateStr, type} of the currently open modal, for in-place refresh
+function renderDayDetailsModal(dateStr, type){
+  dayDetailsState = { dateStr, type };
+  const realItems = state.transactions.filter(t=>t.date===dateStr && t.type===type && t.category!=='Investimento');
+  const forecastItems = state.budgetItems.filter(b=>b.date===dateStr && (b.type||'despesa')===type && !b.paid && !b.variable);
+  document.getElementById('dayDetailsTitle').textContent = `${type==='receita'?'entradas':'saídas'} — ${fmtDate(dateStr)}`;
+  const list = document.getElementById('dayDetailsList');
+  const realHtml = realItems.map(t=>`
+    <div class="daydetail-row">
+      <span class="ddesc">${escapeHtml(t.category)} — ${escapeHtml(t.desc)}</span>
+      <span class="damt">${fmtBRL(t.amount)}</span>
+    </div>`).join('');
+  const forecastHtml = forecastItems.map(b=>`
+    <div class="daydetail-row previsto">
+      <span class="ddesc">${escapeHtml(b.category)} — ${escapeHtml(b.desc)} <span class="muted-tag">(previsto)</span></span>
+      <span class="damt">${fmtBRL(b.amount)}</span>
+      <button type="button" class="btn-pago" onclick="markBudgetItemPaid(${b.id})">pago</button>
+    </div>`).join('');
+  list.innerHTML = (realHtml + forecastHtml) || '<div class="prev-empty">nada neste dia</div>';
+  const total = realItems.reduce((s,t)=>s+t.amount,0) + forecastItems.reduce((s,b)=>s+b.amount,0);
+  document.getElementById('dayDetailsTotal').textContent = `total: ${fmtBRL(total)}`;
+}
+window.showDayDetails = function(dateStr, type){
+  const realItems = state.transactions.filter(t=>t.date===dateStr && t.type===type && t.category!=='Investimento');
+  const forecastItems = state.budgetItems.filter(b=>b.date===dateStr && (b.type||'despesa')===type && !b.paid && !b.variable);
+  if(realItems.length===0 && forecastItems.length===0) return;
+  renderDayDetailsModal(dateStr, type);
+  dayDetailsOverlay.classList.add('open');
+};
+window.showDayRealDetails = window.showDayDetails;
+window.showDayForecastDetails = function(dateStr, type='despesa'){ return window.showDayDetails(dateStr, type); };
+window.markBudgetItemPaid = async function(id){
+  try{
+    const item = state.budgetItems.find(b=>b.id===id);
+    if(!item){
+      showToast('erro: não encontrei essa despesa/receita prevista (id inválido) — tenta fechar e abrir o dia de novo');
+      return;
+    }
+    pushUndo();
+    const nid = crypto.randomUUID();
+    state.transactions.push({
+      id: nid, date: item.date, desc: item.desc, category: item.category,
+      amount: item.amount, type: item.type||'despesa', tags: ['pago-da-previsao']
+    });
+    item.paid = true; // stays in the month's fixed ceiling total, just excluded from "still pending" views
+    await persistTx();
+    await persistBudgetItems();
+    renderSaldos();
+    renderRealizado();
+    renderDashboard();
+    if(document.getElementById('view-previsao').classList.contains('active')) renderPrevisao();
+    if(dayDetailsState) renderDayDetailsModal(dayDetailsState.dateStr, dayDetailsState.type);
+    showToast('tintin! marcado como pago e movido pra realizado', true);
+  }catch(err){
+    showToast('erro ao marcar como pago: ' + (err && err.message ? err.message : 'tente novamente'));
+  }
+};
+document.getElementById('dayDetailsClose').addEventListener('click', ()=> dayDetailsOverlay.classList.remove('open'));
+dayDetailsOverlay.addEventListener('click', (e)=>{ if(e.target===dayDetailsOverlay) dayDetailsOverlay.classList.remove('open'); });
+window.openNewForDate = function(dateStr){
+  editingId = null;
+  document.getElementById('modalTitle').textContent = 'novo lançamento';
+  document.getElementById('txId').value='';
+  document.getElementById('txDate').value = dateStr;
+  document.getElementById('txDesc').value='';
+  document.getElementById('txAmount').value='';
+  document.getElementById('txTags').value='';
+  document.getElementById('txRepeat').value='none';
+  document.getElementById('txRepeat').closest('.field').style.display = '';
+  setModalType('despesa');
+  openModal();
+};
+
+/* ---------------- Previsão ---------------- */
+function lastDayOfMonth(ym){
+  return ym+'-'+String(daysInMonth(ym)).padStart(2,'0');
+}
+document.getElementById('prevPrevMonth').addEventListener('click', ()=>{ previsaoMonth = shiftMonth(previsaoMonth,-1); renderPrevisao(); });
+document.getElementById('prevNextMonth').addEventListener('click', ()=>{ previsaoMonth = shiftMonth(previsaoMonth,1); renderPrevisao(); });
+
+function renderPrevisao(){
+  document.getElementById('previsaoMonthLabel').textContent = monthLabelOf(previsaoMonth);
+  const isDespesa = previsaoType==='despesa';
+  const cats = (isDespesa ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento');
+  const list = document.getElementById('previsaoList');
+  document.getElementById('previsaoListTitle').textContent = isDespesa ? 'orçamento por categoria' : 'receitas previstas por categoria';
+  const addCatBtn = document.getElementById('previsaoAddCatBtn');
+  if(addCatBtn){ addCatBtn.dataset.t = previsaoType; addCatBtn.textContent = `+ nova categoria de ${isDespesa?'despesa':'receita'}`; }
+  list.innerHTML = cats.map((cat, idx)=>{
+    const items = state.budgetItems.filter(b=>b.month===previsaoMonth && b.category===cat && (b.type||'despesa')===previsaoType);
+    const total = items.reduce((s,b)=>s+b.amount,0);
+    const itemsHtml = items.length
+      ? items.map(b=>`<div class="prev-item-row">
+          <span class="prev-item-desc">${escapeHtml(b.desc)}${b.variable?' <span class="variable-tag">orçamento do mês</span>':''}${b.seriesTotal>1?` <span class="muted-tag">(${b.seriesIndex}/${b.seriesTotal})</span>`:''}${b.paid?' <span class="muted-tag" style="color:#1F8C4C;font-weight:700;">✓ pago</span>':''}</span>
+          <span class="prev-item-amt">${fmtBRL(b.amount)}</span>
+          <button type="button" class="icon-btn" onclick="openBudgetItemModal(null, ${b.id})" aria-label="editar previsão">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          </button>
+          <button type="button" class="icon-btn danger" onclick="deleteBudgetItem(${b.id})" aria-label="excluir previsão">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 7h14M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-7 0 1 13a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+        </div>`).join('')
+      : `<div class="prev-empty">nenhuma ${isDespesa?'despesa':'receita'} prevista nesta categoria ainda</div>`;
+    return `<div class="prev-cat" id="prevCat-${idx}">
+      <div class="prev-cat-header" onclick="togglePrevCat(${idx})">
+        <span class="cat-dot" style="background:${colorFor(cat)}"></span>
+        <span class="cname" style="flex:1;">${cat}</span>
+        <span class="prev-cat-total">${fmtBRL(total)}</span>
+        <button type="button" class="icon-btn" onclick="event.stopPropagation(); openBudgetItemModal('${escapeAttr(cat)}')" aria-label="adicionar previsão">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+        </button>
+        <button type="button" class="icon-btn" onclick="event.stopPropagation(); renameCategory('${previsaoType}','${escapeAttr(cat)}')" aria-label="renomear categoria">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+        </button>
+        <button type="button" class="icon-btn danger" onclick="event.stopPropagation(); deleteCategory('${previsaoType}','${escapeAttr(cat)}')" aria-label="excluir categoria">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M5 7h14M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-7 0 1 13a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <svg class="prev-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div class="prev-cat-items">${itemsHtml}</div>
+    </div>`;
+  }).join('');
+  updatePrevisaoTotal();
+  renderFecharMesResumo();
+}
+document.querySelectorAll('#previsaoTypeToggle button').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    previsaoType = btn.dataset.pt;
+    document.querySelectorAll('#previsaoTypeToggle button').forEach(b=>b.classList.toggle('active', b===btn));
+    renderPrevisao();
+  });
+});
+function updatePrevisaoTotal(){
+  document.getElementById('previsaoTotal').textContent = fmtBRL(computeBudgetTotal(previsaoMonth, previsaoType));
+}
+window.togglePrevCat = function(idx){
+  const wrap = document.getElementById('prevCat-'+idx);
+  if(wrap) wrap.classList.toggle('open');
+};
+
+/* --- nova despesa prevista modal --- */
+const budgetOverlay = document.getElementById('budgetModalOverlay');
+let editingBudgetItemId = null;
+function openBudgetItemModal(presetCategory, editId){
+  editingBudgetItemId = editId || null;
+  const sel = document.getElementById('bCategory');
+
+  const titleEl = budgetOverlay.querySelector('h2');
+  const repeatField = document.getElementById('bRepeatType').closest('.field');
+  const dateField = document.getElementById('bDateField');
+  const variableCheckbox = document.getElementById('bVariable');
+
+  if(editingBudgetItemId){
+    const item = state.budgetItems.find(b=>b.id===editingBudgetItemId);
+    if(item){
+      const itemType = item.type || 'despesa';
+      sel.innerHTML = (itemType==='despesa' ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento').map(c=>`<option value="${c}">${c}</option>`).join('');
+      if(titleEl) titleEl.textContent = `editar ${itemType==='despesa'?'despesa':'receita'} prevista`;
+      sel.value = item.category;
+      document.getElementById('bDate').value = item.date || (item.month+'-01');
+      document.getElementById('bDesc').value = item.desc;
+      document.getElementById('bAmount').value = item.amount.toFixed(2).replace('.', ',');
+      document.getElementById('bRepeatType').value = 'once';
+      document.getElementById('bRepeatTimesField').style.display = 'none';
+      if(repeatField) repeatField.style.display = 'none';
+      variableCheckbox.checked = !!item.variable;
+      dateField.style.display = item.variable ? 'none' : '';
+    }
+  } else {
+    sel.innerHTML = (previsaoType==='despesa' ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento').map(c=>`<option value="${c}">${c}</option>`).join('');
+    if(titleEl) titleEl.textContent = `nova ${previsaoType==='despesa'?'despesa':'receita'} prevista`;
+    if(presetCategory) sel.value = presetCategory;
+    const defaultDay = (previsaoMonth===todayISO().slice(0,7)) ? todayISO() : previsaoMonth+'-01';
+    document.getElementById('bDate').value = defaultDay;
+    document.getElementById('bDesc').value = '';
+    document.getElementById('bAmount').value = '';
+    document.getElementById('bRepeatType').value = 'once';
+    document.getElementById('bRepeatTimes').value = '3';
+    document.getElementById('bRepeatTimesField').style.display = 'none';
+    if(repeatField) repeatField.style.display = '';
+    variableCheckbox.checked = false;
+    dateField.style.display = '';
+  }
+  [document.getElementById('bDate'), document.getElementById('bDesc'), document.getElementById('bAmount')].forEach(el=>el.classList.remove('invalid'));
+  budgetOverlay.classList.add('open');
+  setTimeout(()=>document.getElementById('bDesc').focus(), 60);
+}
+window.openBudgetItemModal = openBudgetItemModal;
+function closeBudgetModal(){ budgetOverlay.classList.remove('open'); editingBudgetItemId = null; }
+document.getElementById('budgetModalClose').addEventListener('click', closeBudgetModal);
+document.getElementById('budgetModalCancel').addEventListener('click', closeBudgetModal);
+budgetOverlay.addEventListener('click', (e)=>{ if(e.target===budgetOverlay) closeBudgetModal(); });
+document.getElementById('bVariable').addEventListener('change', (e)=>{
+  document.getElementById('bDateField').style.display = e.target.checked ? 'none' : '';
+});
+document.getElementById('bRepeatType').addEventListener('change', (e)=>{
+  document.getElementById('bRepeatTimesField').style.display = e.target.value==='times' ? '' : 'none';
+});
+['bDate','bDesc','bAmount','bRepeatTimes'].forEach(id=>{
+  document.getElementById(id).addEventListener('keydown', (e)=>{
+    if(e.key==='Enter'){ e.preventDefault(); document.getElementById('budgetSaveBtn').click(); }
+  });
+});
+document.getElementById('budgetSaveBtn').addEventListener('click', async (e)=>{
+  e.preventDefault();
+  try{
+    const dateEl = document.getElementById('bDate');
+    const descEl = document.getElementById('bDesc');
+    const amountEl = document.getElementById('bAmount');
+    const isVariable = document.getElementById('bVariable').checked;
+    [dateEl, descEl, amountEl].forEach(el=>el.classList.remove('invalid'));
+    const category = document.getElementById('bCategory').value;
+    const desc = descEl.value.trim();
+    const amount = parseAmount(amountEl.value);
+    // variable budgets aren't tied to a specific day — use month-01 as an internal placeholder,
+    // ignoring whatever's left in the (hidden) date field
+    const date = isVariable ? previsaoMonth+'-01' : dateEl.value;
+
+    const invalids = [];
+    if(!isVariable && !date) invalids.push(dateEl);
+    if(!desc) invalids.push(descEl);
+    if(amountEl.value==='' || isNaN(amount) || amount<=0) invalids.push(amountEl);
+    if(invalids.length){
+      invalids.forEach(el=>el.classList.add('invalid'));
+      invalids[0].focus();
+      showToast('preencha os campos destacados em laranja');
+      return;
+    }
+
+    if(editingBudgetItemId){
+      pushUndo();
+      const item = state.budgetItems.find(b=>b.id===editingBudgetItemId);
+      let itemTypeLabel = 'despesa';
+      if(item){
+        itemTypeLabel = item.type==='receita' ? 'receita' : 'despesa';
+        Object.assign(item, { category, desc, amount, date, month: date.slice(0,7), variable: isVariable });
+      }
+      await persistBudgetItems();
+      closeBudgetModal();
+      renderPrevisao();
+      if(previsaoMonth===currentMonth) renderDashboard();
+      showToast(`tintin! ${itemTypeLabel} prevista atualizada`, true);
+      return;
+    }
+
+    const repeatType = document.getElementById('bRepeatType').value;
+    const timesRaw = parseInt(document.getElementById('bRepeatTimes').value, 10);
+    const times = repeatType==='times' ? Math.max(2, Math.min(36, isNaN(timesRaw)?3:timesRaw)) : 1;
+    const seriesId = times>1 ? 'bs_'+Date.now() : null;
+    pushUndo();
+    for(let i=0;i<times;i++){
+      const nid = crypto.randomUUID();
+      const itemDate = i===0 ? date : addMonths(date, i);
+      const ym = itemDate.slice(0,7);
+      state.budgetItems.push({ id: nid, category, desc, amount, date: itemDate, month: ym, type: previsaoType, variable: isVariable, seriesId, seriesIndex: i+1, seriesTotal: times });
+    }
+    await persistBudgetItems();
+    closeBudgetModal();
+    renderPrevisao();
+    if(previsaoMonth===currentMonth) renderDashboard();
+    const typeLabel = previsaoType==='receita' ? 'receita' : 'despesa';
+    showToast(times>1 ? `tintin! ${typeLabel} prevista para ${times} meses` : `tintin! ${typeLabel} prevista adicionada`, true);
+  }catch(err){
+    showToast('erro ao salvar: '+(err && err.message ? err.message : 'tente novamente'));
+  }
+});
+window.deleteBudgetItem = async function(id){
+  const item = state.budgetItems.find(b=>b.id===id);
+  if(!item) return;
+  const label = (item.type==='receita') ? 'receita' : 'despesa';
+  const seriesItems = item.seriesId ? state.budgetItems.filter(b=>b.seriesId===item.seriesId) : [];
+
+  let choice;
+  if(seriesItems.length>1){
+    choice = await showDialog({
+      title: `excluir ${label} prevista`,
+      message: `"${item.desc}" se repete em ${seriesItems.length} meses (${item.seriesIndex}/${item.seriesTotal}). Excluir só este mês, ou todas as ${seriesItems.length} ocorrências?`,
+      okLabel: 'só este mês',
+      extraLabel: `todas as ${seriesItems.length}`
+    });
+    if(!choice) return;
+  } else {
+    const ok = await showDialog({title:`excluir ${label} prevista`, message:`excluir esta ${label} da previsão deste mês?`, okLabel:'excluir'});
+    if(!ok) return;
+    choice = 'ok';
+  }
+
+  pushUndo();
+  if(choice==='extra'){
+    state.budgetItems = state.budgetItems.filter(b=>b.seriesId!==item.seriesId);
+  } else {
+    state.budgetItems = state.budgetItems.filter(b=>b.id!==id);
+  }
+  await persistBudgetItems();
+  renderPrevisao();
+  if(previsaoMonth===currentMonth) renderDashboard();
+  showToast(choice==='extra' ? `todas as ${seriesItems.length} ocorrências removidas` : `${label} prevista removida`, true);
+};
+
+function renderFecharMesResumo(){
+  const closingMonth = todayISO().slice(0,7);
+  const nextMonth = shiftMonth(closingMonth,1);
+  const receitasDoMes = computeReceitasReaisDoMes(closingMonth);
+  const overrun = computeOverrunDoMes(closingMonth);
+  const receitaLiquida = receitasDoMes - overrun;
+  const previstoProximo = computeBudgetTotal(nextMonth, 'despesa');
+  const sobra = receitaLiquida - previstoProximo;
+  const jaFechado = state.closedMonths.includes(closingMonth);
+  const el = document.getElementById('fecharMesResumo');
+  const btn = document.getElementById('btnFecharMes');
+  if(previstoProximo<=0){
+    el.innerHTML = `Cadastre a previsão de <strong>${monthLabelOf(nextMonth)}</strong> antes de fechar ${monthLabelOf(closingMonth)}.`;
+    btn.textContent = 'preencha a previsão do próximo mês primeiro';
+    btn.disabled = true;
+    btn.style.opacity = '0.5';
+    return;
+  }
+  btn.disabled = false;
+  btn.style.opacity = '1';
+  const overrunLine = overrun>0
+    ? `<br><span style="color:var(--orange-2);">estourou o pote de gasto em ${fmtBRL(overrun)} — descontado da receita antes da conta.</span>`
+    : '';
+  el.innerHTML = `Fechando <strong>${monthLabelOf(closingMonth)}</strong>: recebido ${fmtBRL(receitasDoMes)}${overrun>0?` − estouro ${fmtBRL(overrun)}`:''} − previsão de ${monthLabelOf(nextMonth)} ${fmtBRL(previstoProximo)} = <strong>${sobra>=0?'aporte':'resgate'} de ${fmtBRL(Math.abs(sobra))}</strong> em investimento.`
+    + overrunLine
+    + (jaFechado ? `<br><span style="color:var(--orange-2);">este mês já foi fechado antes — fechar de novo cria um lançamento duplicado.</span>` : '');
+  btn.textContent = jaFechado ? 'fechar mês novamente (cuidado, duplica)' : `fechar ${monthLabelOf(closingMonth)} e investir a sobra`;
+}
+
+document.getElementById('btnFecharMes').addEventListener('click', async ()=>{
+  const closingMonth = todayISO().slice(0,7);
+  const nextMonth = shiftMonth(closingMonth,1);
+  const receitasDoMes = computeReceitasReaisDoMes(closingMonth);
+  const overrun = computeOverrunDoMes(closingMonth);
+  const receitaLiquida = receitasDoMes - overrun;
+  const previstoProximo = computeBudgetTotal(nextMonth, 'despesa');
+  const sobra = receitaLiquida - previstoProximo;
+
+  const ok = await showDialog({
+    title:'fechar mês',
+    message:`Fechando ${monthLabelOf(closingMonth)}: recebido ${fmtBRL(receitasDoMes)}${overrun>0?` − estouro do pote ${fmtBRL(overrun)}`:''} − previsão de ${monthLabelOf(nextMonth)} ${fmtBRL(previstoProximo)} = ${sobra>=0?'aporte':'resgate'} de ${fmtBRL(Math.abs(sobra))}. Confirmar?`,
+    okLabel:'fechar mês'
+  });
+  if(!ok) return;
+  pushUndo();
+  const nextId = crypto.randomUUID();
+  state.transactions.push({
+    id: nextId,
+    date: lastDayOfMonth(closingMonth),
+    desc: `Fechamento de ${monthLabelOf(closingMonth)}`,
+    category: 'Investimento',
+    type: sobra>=0 ? 'despesa' : 'receita',
+    amount: Math.abs(sobra),
+    tags: ['fechamento']
+  });
+  if(!state.closedMonths.includes(closingMonth)) state.closedMonths.push(closingMonth);
+  await persistTx();
+  try{ await dbCloseMonth(closingMonth, sobra, overrun); }catch(err){ showToast('erro ao registrar fechamento: '+(err.message||'')); }
+  await persistClosedMonths();
+  currentMonth = nextMonth;
+  saldosMonth = nextMonth;
+  renderDashboard();
+  renderRealizado();
+  renderSaldos();
+  renderFecharMesResumo();
+  showToast('tintin! mês fechado e sobra investida', true);
+});
+
+/* ---------------- Realizado ---------------- */
+function computeCategoryBudgetTotal(ym, category, type='despesa'){
+  return state.budgetItems.filter(b=>b.month===ym && b.category===category && (b.type||'despesa')===type).reduce((s,b)=>s+b.amount,0);
+}
+document.getElementById('realizadoPrevMonth').addEventListener('click', ()=>{ realizadoMonth = shiftMonth(realizadoMonth,-1); clearSelection(); renderRealizado(); });
+document.getElementById('realizadoNextMonth').addEventListener('click', ()=>{ realizadoMonth = shiftMonth(realizadoMonth,1); clearSelection(); renderRealizado(); });
+document.querySelectorAll('#realizadoTypeToggle button').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    realizadoType = btn.dataset.rt;
+    document.querySelectorAll('#realizadoTypeToggle button').forEach(b=>b.classList.toggle('active', b===btn));
+    clearSelection();
+    renderRealizado();
+  });
+});
+document.getElementById('realizadoBusca').addEventListener('input', renderRealizado);
+
+function renderRealizado(){
+  document.getElementById('realizadoMonthLabel').textContent = monthLabelOf(realizadoMonth);
+  const isDespesa = realizadoType==='despesa';
+  const cats = (isDespesa ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento');
+  const search = (document.getElementById('realizadoBusca').value||'').trim().toLowerCase();
+  document.getElementById('realizadoListTitle').textContent = isDespesa ? 'despesas realizadas por categoria' : 'receitas realizadas por categoria';
+  const monthTotal = (isDespesa ? computeSaidasReaisDoMes(realizadoMonth) : computeReceitasReaisDoMes(realizadoMonth));
+  document.getElementById('realizadoTotal').textContent = fmtBRL(monthTotal);
+  const list = document.getElementById('realizadoList');
+  list.innerHTML = cats.map((cat, idx)=>{
+    let items = state.transactions.filter(t=>t.date.slice(0,7)===realizadoMonth && t.category===cat && t.type===realizadoType);
+    items.sort((a,b)=> a.date.localeCompare(b.date) || a.id-b.id);
+    if(search) items = items.filter(t=> t.desc.toLowerCase().includes(search));
+    const total = items.reduce((s,t)=>s+t.amount,0);
+    const previsto = computeCategoryBudgetTotal(realizadoMonth, cat, realizadoType);
+    const pctInfo = previsto>0
+      ? `<div class="muted-tag" style="font-weight:500;margin-top:2px;">previsto: ${fmtBRL(previsto)} (${Math.round(total/previsto*100)}%)</div>`
+      : '';
+    const matchesSearch = !search || cat.toLowerCase().includes(search) || items.length>0;
+    if(search && !matchesSearch) return '';
+    const itemsHtml = items.length
+      ? items.map(t=>`<div class="prev-item-row">
+          <input type="checkbox" class="tx-select-checkbox" data-id="${t.id}" ${selectedTxIds.has(t.id)?'checked':''} aria-label="selecionar lançamento">
+          <span style="width:50px;color:var(--muted);font-size:12px;flex-shrink:0;">${fmtDate(t.date).slice(0,5)}</span>
+          <span class="prev-item-desc">${escapeHtml(t.desc)}${(t.tags&&t.tags.length)?` <span class="muted-tag">${t.tags.map(tag=>'#'+escapeHtml(tag)).join(' ')}</span>`:''}</span>
+          <span class="prev-item-amt">${fmtBRL(t.amount)}</span>
+          <button type="button" class="icon-btn" onclick="openEdit(${t.id})" aria-label="editar">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          </button>
+          <button type="button" class="icon-btn danger" onclick="deleteTx(${t.id})" aria-label="excluir">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 7h14M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-7 0 1 13a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+        </div>`).join('')
+      : `<div class="prev-empty">nenhum lançamento nesta categoria${search?' pra essa busca':' ainda'}</div>`;
+    return `<div class="prev-cat${search && items.length ? ' open':''}" id="realizadoCat-${idx}">
+      <div class="prev-cat-header" onclick="toggleRealizadoCat(${idx})">
+        <span class="cat-dot" style="background:${colorFor(cat)}"></span>
+        <div style="flex:1;min-width:0;">
+          <span class="cname">${cat}</span>
+          ${pctInfo}
+        </div>
+        <span class="prev-cat-total">${fmtBRL(total)}</span>
+        <button type="button" class="icon-btn" onclick="event.stopPropagation(); openNewForCategory('${escapeAttr(cat)}','${realizadoType}')" aria-label="novo lançamento">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+        </button>
+        <button type="button" class="icon-btn" onclick="event.stopPropagation(); renameCategory('${realizadoType}','${escapeAttr(cat)}')" aria-label="renomear categoria">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+        </button>
+        <button type="button" class="icon-btn danger" onclick="event.stopPropagation(); deleteCategory('${realizadoType}','${escapeAttr(cat)}')" aria-label="excluir categoria">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M5 7h14M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-7 0 1 13a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <svg class="prev-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div class="prev-cat-items">${itemsHtml}</div>
+    </div>`;
+  }).join('');
+}
+window.toggleRealizadoCat = function(idx){
+  const wrap = document.getElementById('realizadoCat-'+idx);
+  if(wrap) wrap.classList.toggle('open');
+};
+window.openNewForCategory = function(category, type){
+  editingId = null;
+  document.getElementById('modalTitle').textContent = 'novo lançamento';
+  document.getElementById('txId').value='';
+  document.getElementById('txDate').value = (realizadoMonth===todayISO().slice(0,7)) ? todayISO() : realizadoMonth+'-01';
+  document.getElementById('txDesc').value='';
+  document.getElementById('txAmount').value='';
+  document.getElementById('txTags').value='';
+  document.getElementById('txRepeat').value='none';
+  document.getElementById('txRepeat').closest('.field').style.display = '';
+  setModalType(type);
+  document.getElementById('txCategory').value = category;
+  openModal();
+};
+
+/* ---------------- Bulk move category (Realizado) ---------------- */
+document.getElementById('realizadoList').addEventListener('change', (e)=>{
+  if(!e.target.classList.contains('tx-select-checkbox')) return;
+  const id = parseInt(e.target.dataset.id, 10);
+  if(e.target.checked) selectedTxIds.add(id);
+  else selectedTxIds.delete(id);
+  updateBulkMoveBar();
+});
+function updateBulkMoveBar(){
+  const bar = document.getElementById('bulkMoveBar');
+  const count = selectedTxIds.size;
+  if(count===0){ bar.classList.remove('show'); return; }
+  bar.classList.add('show');
+  document.getElementById('bulkMoveCount').textContent = `${count} selecionado${count>1?'s':''}`;
+  const sel = document.getElementById('bulkMoveCategory');
+  const cats = (realizadoType==='despesa' ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento');
+  const prevValue = sel.value;
+  sel.innerHTML = cats.map(c=>`<option value="${c}">${c}</option>`).join('');
+  if(cats.includes(prevValue)) sel.value = prevValue;
+}
+function clearSelection(){
+  selectedTxIds.clear();
+  updateBulkMoveBar();
+}
+document.getElementById('bulkMoveCancel').addEventListener('click', ()=>{
+  clearSelection();
+  renderRealizado();
+});
+document.getElementById('bulkMoveBtn').addEventListener('click', async ()=>{
+  const target = document.getElementById('bulkMoveCategory').value;
+  if(!target || selectedTxIds.size===0) return;
+  const count = selectedTxIds.size;
+  const ok = await showDialog({
+    title: 'mover lançamentos',
+    message: `mover ${count} lançamento${count>1?'s':''} pra "${target}"?`,
+    okLabel: 'mover'
+  });
+  if(!ok) return;
+  pushUndo();
+  state.transactions.forEach(t=>{ if(selectedTxIds.has(t.id)) t.category = target; });
+  await persistTx();
+  clearSelection();
+  renderRealizado();
+  renderDashboard();
+  showToast(`tintin! ${count} lançamento${count>1?'s':''} movido${count>1?'s':''} pra ${target}`, true);
+});
+
+/* ---------------- Categorias ---------------- */
+function categoryTotal(name, type){
+  return state.transactions.filter(t=>t.category===name && t.type===type).reduce((s,t)=>s+t.amount,0);
+}
+function categoryCount(name, type){
+  return state.transactions.filter(t=>t.category===name && t.type===type).length;
+}
+function renderCategorias(){
+  const dEl = document.getElementById('catListDespesa');
+  const rEl = document.getElementById('catListReceita');
+  const build = (list, type) => list.length===0
+    ? '<div class="empty">nenhuma categoria ainda</div>'
+    : list.slice().sort((a,b)=> categoryTotal(b,type)-categoryTotal(a,type)).map(name=>`
+      <div class="cat-chip">
+        <span class="cat-dot" style="background:${colorFor(name)}"></span>
+        <div class="info">
+          <div class="cname">${name}</div>
+          <div class="ctotal">${categoryCount(name,type)} lançamento(s) · ${fmtBRL(categoryTotal(name,type))}</div>
+        </div>
+        <div class="cactions">
+          <button class="icon-btn" onclick="renameCategory('${type}','${escapeAttr(name)}')" aria-label="renomear">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          </button>
+          <button class="icon-btn danger" onclick="deleteCategory('${type}','${escapeAttr(name)}')" aria-label="excluir">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 7h14M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-7 0 1 13a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+      </div>`).join('');
+  dEl.innerHTML = build(state.categories.despesa, 'despesa');
+  rEl.innerHTML = build(state.categories.receita, 'receita');
+}
+document.querySelectorAll('.add-cat-btn').forEach(btn=>{
+  btn.addEventListener('click', async ()=>{
+    const type = btn.dataset.t;
+    const name = await showDialog({title:`nova categoria de ${type}`, message:'digite o nome da categoria:', withInput:true, defaultValue:'', okLabel:'criar'});
+    if(!name) return;
+    const trimmed = name.trim();
+    if(!trimmed) return;
+    if(state.categories[type].some(c=>c.toLowerCase()===trimmed.toLowerCase())){
+      showToast('essa categoria já existe'); return;
+    }
+    pushUndo();
+    try{
+      await dbCreateCategory(trimmed, type);
+      await persistCats();
+      renderCategorias();
+      if(document.getElementById('view-previsao').classList.contains('active')) renderPrevisao();
+      showToast('categoria criada', true);
+    }catch(err){
+      showToast('erro ao criar categoria: '+(err.message||''));
+    }
+  });
+});
+// Renomear categoria: como category_id é chave estrangeira no banco, isso é
+// só um UPDATE do nome — não precisa reescrever cada lançamento/previsão,
+// eles já "seguem" o novo nome por apontarem pro mesmo id (ver data-layer.js).
+async function renameCategory(type, oldName){
+  const novo = await showDialog({title:'renomear categoria', message:`novo nome para "${oldName}":`, withInput:true, defaultValue:oldName, okLabel:'salvar'});
+  if(!novo) return;
+  const trimmed = novo.trim();
+  if(!trimmed || trimmed===oldName) return;
+  pushUndo();
+  try{
+    await dbRenameCategory(oldName, type, trimmed);
+    // atualiza os textos em memória pra refletir na hora (o id no banco não mudou)
+    state.transactions.forEach(t=>{ if(t.type===type && t.category===oldName) t.category = trimmed; });
+    state.budgetItems.forEach(b=>{ if(b.category===oldName && (b.type||'despesa')===type) b.category = trimmed; });
+    lastSyncedTransactions.forEach(t=>{ if(t.type===type && t.category===oldName) t.category = trimmed; });
+    lastSyncedBudgetItems.forEach(b=>{ if(b.category===oldName && (b.type||'despesa')===type) b.category = trimmed; });
+    await persistCats();
+    renderCategorias();
+    if(document.getElementById('view-previsao').classList.contains('active')) renderPrevisao();
+    showToast('categoria renomeada', true);
+  }catch(err){
+    showToast('erro ao renomear: '+(err.message||''));
+  }
+}
+async function deleteCategory(type, name){
+  const count = categoryCount(name, type);
+  const msg = count>0
+    ? `"${name}" tem ${count} lançamento(s). Eles serão movidos para "Outros". Continuar?`
+    : `excluir a categoria "${name}"?`;
+  const ok = await showDialog({title:'excluir categoria', message: msg, okLabel:'excluir'});
+  if(!ok) return;
+  pushUndo();
+  try{
+    await dbDeleteCategory(name, type);
+    // espelha localmente a reatribuição pra "Outros" que já aconteceu no banco
+    state.transactions.forEach(t=>{ if(t.type===type && t.category===name) t.category = 'Outros'; });
+    state.budgetItems.forEach(b=>{ if(b.category===name && (b.type||'despesa')===type) b.category = 'Outros'; });
+    lastSyncedTransactions.forEach(t=>{ if(t.type===type && t.category===name) t.category = 'Outros'; });
+    lastSyncedBudgetItems.forEach(b=>{ if(b.category===name && (b.type||'despesa')===type) b.category = 'Outros'; });
+    await persistCats();
+    renderCategorias();
+    if(document.getElementById('view-previsao').classList.contains('active')) renderPrevisao();
+    showToast('categoria excluída', true);
+  }catch(err){
+    showToast('erro ao excluir categoria: '+(err.message||''));
+  }
+}
+
+/* ---------------- Modal / Form ---------------- */
+const overlay = document.getElementById('modalOverlay');
+function openModal(){ overlay.classList.add('open'); }
+function closeModal(){ overlay.classList.remove('open'); editingId=null; }
+document.getElementById('btnNovo').addEventListener('click', ()=>{
+  editingId = null;
+  document.getElementById('modalTitle').textContent = 'novo lançamento';
+  document.getElementById('txId').value='';
+  document.getElementById('txDate').value = todayISO();
+  document.getElementById('txDesc').value='';
+  document.getElementById('txAmount').value='';
+  document.getElementById('txTags').value='';
+  document.getElementById('txRepeat').value='none';
+  document.getElementById('txRepeat').closest('.field').style.display = '';
+  setModalType('despesa');
+  openModal();
+});
+document.getElementById('modalClose').addEventListener('click', closeModal);
+document.getElementById('modalCancel').addEventListener('click', closeModal);
+overlay.addEventListener('click', (e)=>{ if(e.target===overlay) closeModal(); });
+
+function setModalType(t){
+  modalType = t;
+  document.querySelectorAll('.type-toggle button').forEach(b=>b.classList.toggle('active', b.dataset.t===t));
+  const sel = document.getElementById('txCategory');
+  sel.innerHTML = state.categories[t].map(c=>`<option value="${c}">${c}</option>`).join('');
+}
+document.querySelectorAll('.type-toggle button').forEach(b=>{
+  b.addEventListener('click', ()=> setModalType(b.dataset.t));
+});
+
+window.openEdit = function(id){
+  const t = state.transactions.find(x=>x.id===id);
+  if(!t) return;
+  editingId = id;
+  document.getElementById('modalTitle').textContent = 'editar lançamento';
+  document.getElementById('txId').value = id;
+  document.getElementById('txDate').value = t.date;
+  document.getElementById('txDesc').value = t.desc;
+  document.getElementById('txAmount').value = t.amount.toFixed(2).replace('.', ',');
+  document.getElementById('txTags').value = (t.tags||[]).join(', ');
+  document.getElementById('txRepeat').value = 'none';
+  document.getElementById('txRepeat').closest('.field').style.display = 'none';
+  setModalType(t.type);
+  document.getElementById('txCategory').value = t.category;
+  openModal();
+};
+window.deleteTx = async function(id){
+  const ok = await showDialog({title:'excluir lançamento', message:'excluir este lançamento?', okLabel:'excluir'});
+  if(!ok) return;
+  pushUndo();
+  state.transactions = state.transactions.filter(t=>t.id!==id);
+  await persistTx();
+  renderRealizado();
+  renderDashboard();
+  showToast('lançamento excluído', true);
+};
+
+['txDate','txDesc','txCategory','txAmount'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', (e)=> e.target.classList.remove('invalid'));
+  document.getElementById(id).addEventListener('change', (e)=> e.target.classList.remove('invalid'));
+});
+
+['txDate','txDesc','txCategory','txAmount','txTags'].forEach(id=>{
+  document.getElementById(id).addEventListener('keydown', (e)=>{
+    if(e.key==='Enter'){ e.preventDefault(); document.getElementById('txSaveBtn').click(); }
+  });
+});
+document.getElementById('txSaveBtn').addEventListener('click', async (e)=>{
+  e.preventDefault();
+  try{
+    const dateEl = document.getElementById('txDate');
+    const descEl = document.getElementById('txDesc');
+    const catEl = document.getElementById('txCategory');
+    const amountEl = document.getElementById('txAmount');
+    [dateEl,descEl,catEl,amountEl].forEach(el=>el.classList.remove('invalid'));
+
+    const date = dateEl.value;
+    const desc = descEl.value.trim();
+    const category = catEl.value;
+    const amountRaw = amountEl.value;
+    const amount = parseAmount(amountRaw);
+    const tags = document.getElementById('txTags').value.split(',').map(s=>s.trim()).filter(Boolean);
+    const repeat = document.getElementById('txRepeat').value;
+
+    const invalids = [];
+    if(!date) invalids.push(dateEl);
+    if(!desc) invalids.push(descEl);
+    if(!category) invalids.push(catEl);
+    if(amountRaw==='' || isNaN(amount) || amount<0) invalids.push(amountEl);
+
+    if(invalids.length){
+      invalids.forEach(el=>el.classList.add('invalid'));
+      invalids[0].focus();
+      showToast('preencha os campos destacados em laranja');
+      return;
+    }
+
+    let addedCount = 1;
+    pushUndo();
+    if(editingId){
+      const t = state.transactions.find(x=>x.id===editingId);
+      Object.assign(t, { date, desc, category, amount, type: modalType, tags });
+    } else {
+      const nextId = () => crypto.randomUUID();
+      state.transactions.push({ id: nextId(), date, desc, category, amount, type: modalType, tags });
+      if(repeat==='weekly' || repeat==='monthly'){
+        const recurringId = 'rec_'+Date.now();
+        state.transactions[state.transactions.length-1].recurringId = recurringId;
+        for(let i=1;i<12;i++){
+          const d2 = repeat==='weekly' ? addDays(date, 7*i) : addMonths(date, i);
+          state.transactions.push({ id: nextId(), date:d2, desc, category, amount, type: modalType, tags, recurringId });
+        }
+        addedCount = 12;
+      }
+    }
+    await persistTx();
+    closeModal();
+    currentMonth = date.slice(0,7);
+    saldosMonth = date.slice(0,7);
+    realizadoMonth = date.slice(0,7);
+    renderDashboard();
+    renderRealizado();
+    renderSaldos();
+    showToast(addedCount>1 ? `tintin! ${addedCount} lançamentos criados` : 'tintin! lançamento salvo', true);
+  }catch(err){
+    showToast('erro ao salvar: ' + (err && err.message ? err.message : 'tente novamente'));
+  }
+});
+
+/* ---------------- Exportar dados ---------------- */
+document.getElementById('btnBackup').addEventListener('click', ()=>{
+  try{
+    const snapshot = {
+      exportado_em: new Date().toISOString(),
+      transacoes: state.transactions,
+      categorias: state.categories,
+      valor_investido_base: state.investedBase,
+      previsao: state.budgetItems,
+      meses_fechados: state.closedMonths,
+      saldo_inicial_manual: state.saldoInicialOverrides,
+    };
+    const blob = new Blob([JSON.stringify(snapshot, null, 2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'tintin-dados-'+todayISO()+'.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 2000);
+    showToast(`tintin! dados exportados (${state.transactions.length} lançamentos, ${state.budgetItems.length} previsões)`);
+  }catch(err){
+    showToast('erro ao exportar dados: '+(err && err.message ? err.message : 'tente novamente'));
+  }
+});
+
+/* ---------------- Helpers ---------------- */
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function escapeAttr(s){ return String(s).replace(/'/g, "\\'"); }
+
+/* ---------------- Init ---------------- */
+async function initApp(){
+  currentMonth = todayISO().slice(0,7);
+  saldosMonth = currentMonth;
+  try{
+    await loadState();
+  }catch(e){
+    showToast('não foi possível carregar seus dados — verifique sua conexão e recarregue a página. ('+(e.message||'')+')');
+    return;
+  }
+  if(!allMonthsSorted().includes(currentMonth)){
+    const months = allMonthsSorted();
+    if(months.length) currentMonth = months[months.length-1];
+  }
+  saldosMonth = currentMonth;
+  realizadoMonth = currentMonth;
+  previsaoMonth = shiftMonth(currentMonth, 1);
+  renderDashboard();
+  renderRealizado();
+  renderCategorias();
+  renderSaldos();
+  renderPrevisao();
+  checkDailyReminder();
+}
+// o app só carrega dados depois que auth.js confirma que o usuário está logado
+document.addEventListener('tintin:authenticated', initApp);
+
+function checkDailyReminder(){
+  const today = todayISO();
+  if(state.dismissedReminders.includes(today)) return;
+  const items = state.budgetItems.filter(b=>b.date===today && (b.type||'despesa')==='despesa');
+  if(items.length===0) return;
+  const total = items.reduce((s,b)=>s+b.amount,0);
+  document.getElementById('reminderList').innerHTML = items.map(b=>`
+    <div class="reminder-item">
+      <span class="cat-dot" style="background:${colorFor(b.category)}"></span>
+      <span class="rname">${escapeHtml(b.category)} — ${escapeHtml(b.desc)}</span>
+      <span class="ramt">${fmtBRL(b.amount)}</span>
+    </div>`).join('');
+  document.getElementById('reminderTotal').textContent = `total previsto pra hoje: ${fmtBRL(total)}`;
+  document.getElementById('reminderOverlay').classList.add('open');
+}
+async function dismissReminder(){
+  const today = todayISO();
+  if(!state.dismissedReminders.includes(today)) state.dismissedReminders.push(today);
+  try{ await dbDismissReminder(today); }catch(e){ /* não crítico */ }
+  await persistDismissedReminders();
+  document.getElementById('reminderOverlay').classList.remove('open');
+}
+document.getElementById('reminderOk').addEventListener('click', dismissReminder);
+document.getElementById('reminderGoMapa').addEventListener('click', async ()=>{
+  await dismissReminder();
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  const mapaTab = document.querySelector('.tab[data-tab="saldos"]');
+  if(mapaTab) mapaTab.classList.add('active');
+  document.getElementById('view-saldos').classList.add('active');
+  saldosMonth = todayISO().slice(0,7);
+  renderSaldos();
+});
+
