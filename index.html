@@ -50,6 +50,9 @@
   </div>
 </div>
 
+<!-- ONBOARDING ("primeiros passos") — só aparece pra contas novas -->
+<div class="onboarding-page" id="onboardingOverlay"></div>
+
 <header class="topbar">
   <div class="brand">
     <span class="mark">
@@ -63,6 +66,7 @@
       <button class="tab" data-tab="saldos">mapa</button>
       <button class="tab" data-tab="previsao">previsto</button>
       <button class="tab" data-tab="lancamentos">realizado</button>
+      <button class="tab" data-tab="investimentos">investimentos</button>
     </nav>
     <button class="btn-cta" id="btnNovo">+ novo lançamento</button>
   </div>
@@ -83,6 +87,7 @@
       </button>
     </div>
 
+    <div class="stat-row-label">quanto eu tenho</div>
     <div class="stat-grid">
       <div class="stat-card investido">
         <div class="stat-badge">
@@ -95,9 +100,28 @@
         <div class="stat-badge">
           <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M12 4v2M12 18v2M4 12h2M18 12h2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         </div>
-        <div class="stat-label">saldo em conta</div>
+        <div class="stat-label">saldo inicial</div>
         <div class="stat-value" id="statSaldoConta">—</div>
       </div>
+      <div class="stat-card despesa">
+        <div class="stat-badge">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 7l6 6 4-4 6 8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 17h5v-5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <span class="stat-info" tabindex="0">
+          <span class="stat-info-icon">i</span>
+          <span class="stat-info-tip" id="statDespesaSub"></span>
+        </span>
+        <div class="mini-toggle" id="despesaModeToggle">
+          <button type="button" class="active" data-dm="realizado">real</button>
+          <button type="button" data-dm="previsto">prev</button>
+        </div>
+        <div class="stat-label">gasto realizado</div>
+        <div class="stat-value" id="statDespesa">—</div>
+      </div>
+    </div>
+
+    <div class="stat-row-label">a equação da economia</div>
+    <div class="stat-grid">
       <div class="stat-card receita">
         <div class="stat-badge">
           <svg viewBox="0 0 24 24" fill="none"><path d="M4 17l6-6 4 4 6-8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 7h5v5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -108,17 +132,6 @@
         </div>
         <div class="stat-label">receitas do mês</div>
         <div class="stat-value" id="statReceita">—</div>
-      </div>
-      <div class="stat-card despesa">
-        <div class="stat-badge">
-          <svg viewBox="0 0 24 24" fill="none"><path d="M4 7l6 6 4-4 6 8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 17h5v-5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </div>
-        <span class="stat-info" tabindex="0">
-          <span class="stat-info-icon">i</span>
-          <span class="stat-info-tip" id="statDespesaSub"></span>
-        </span>
-        <div class="stat-label">gasto realizado</div>
-        <div class="stat-value" id="statDespesa">—</div>
       </div>
       <div class="stat-card proximo">
         <div class="stat-badge">
@@ -155,7 +168,7 @@
         <div class="legend-list" id="pieLegend"></div>
       </div>
       <div class="panel">
-        <h3>receitas por categoria</h3>
+        <h3 id="pieTitleReceita">receitas por categoria</h3>
         <div id="pieWrapReceita" class="chart-wrap"><canvas id="pieChartReceita"></canvas></div>
         <div class="legend-list" id="pieLegendReceita"></div>
       </div>
@@ -164,6 +177,11 @@
     <div class="panel">
       <h3>receitas x despesas — últimos 6 meses</h3>
       <div class="chart-wrap" style="height:260px;"><canvas id="barChart"></canvas></div>
+    </div>
+
+    <div class="panel" style="margin-top:16px;">
+      <h3>evolução do valor investido — últimos 6 meses</h3>
+      <div class="chart-wrap" style="height:260px;"><canvas id="investidoChart"></canvas></div>
     </div>
   </section>
 
@@ -198,22 +216,30 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
     </div>
-    <div class="prev-toggle" id="previsaoTypeToggle">
-      <button type="button" class="active" data-pt="despesa">despesas</button>
-      <button type="button" data-pt="receita">receitas</button>
-    </div>
-    <div class="panel">
-      <h3 style="display:flex;justify-content:space-between;align-items:center;">
-        <span id="previsaoListTitle">orçamento por categoria</span>
-        <span id="previsaoTotal" style="font-family:'Baloo 2';font-size:18px;color:var(--muted);">R$ 0,00</span>
-      </h3>
-      <div id="previsaoList"></div>
-      <button class="add-cat-btn" id="previsaoAddCatBtn" data-t="despesa" style="margin-top:14px;">+ nova categoria de despesa</button>
-    </div>
-    <div class="panel" style="margin-top:16px;">
-      <h3>fechar mês</h3>
-      <p class="dialog-msg" id="fecharMesResumo" style="font-size:14.5px;"></p>
-      <button type="button" class="btn-cta" id="btnFecharMes" style="width:100%;justify-content:center;">fechar mês e investir a sobra</button>
+    <input type="text" id="previsaoBusca" placeholder="buscar por descrição ou categoria..." style="width:100%;padding:11px 16px;border-radius:999px;border:1.5px solid #ECE3CC;background:var(--white);font-size:14px;margin-bottom:16px;outline:none;">
+    <div class="prev-cols">
+      <div class="prev-col prev-col-despesa">
+        <div class="prev-col-title">despesas</div>
+        <div class="panel" style="padding:16px 20px 4px;margin-bottom:12px;">
+          <h3 style="display:flex;justify-content:space-between;align-items:center;margin:0;">
+            <span>orçamento por categoria</span>
+            <span id="previsaoTotalDespesa" style="font-family:'Baloo 2';font-size:18px;color:var(--muted);">R$ 0,00</span>
+          </h3>
+        </div>
+        <div id="previsaoListDespesa"></div>
+        <button class="add-cat-btn" data-t="despesa" style="margin-top:6px;">+ nova categoria de despesa</button>
+      </div>
+      <div class="prev-col prev-col-receita">
+        <div class="prev-col-title">receitas</div>
+        <div class="panel" style="padding:16px 20px 4px;margin-bottom:12px;">
+          <h3 style="display:flex;justify-content:space-between;align-items:center;margin:0;">
+            <span>receitas previstas por categoria</span>
+            <span id="previsaoTotalReceita" style="font-family:'Baloo 2';font-size:18px;color:var(--muted);">R$ 0,00</span>
+          </h3>
+        </div>
+        <div id="previsaoListReceita"></div>
+        <button class="add-cat-btn" data-t="receita" style="margin-top:6px;">+ nova categoria de receita</button>
+      </div>
     </div>
   </section>
 
@@ -228,18 +254,76 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
     </div>
-    <div class="prev-toggle" id="realizadoTypeToggle">
-      <button type="button" class="active" data-rt="despesa">despesas</button>
-      <button type="button" data-rt="receita">receitas</button>
-    </div>
     <input type="text" id="realizadoBusca" placeholder="buscar por descrição ou categoria..." style="width:100%;padding:11px 16px;border-radius:999px;border:1.5px solid #ECE3CC;background:var(--white);font-size:14px;margin-bottom:16px;outline:none;">
-    <div class="panel" style="padding:16px 20px 4px;margin-bottom:12px;">
-      <h3 style="display:flex;justify-content:space-between;align-items:center;margin:0;">
-        <span id="realizadoListTitle">despesas realizadas por categoria</span>
-        <span id="realizadoTotal" style="font-family:'Baloo 2';font-size:18px;color:var(--muted);">R$ 0,00</span>
-      </h3>
+    <div class="prev-cols" id="realizadoCols">
+      <div class="prev-col prev-col-despesa">
+        <div class="prev-col-title">despesas</div>
+        <div class="panel" style="padding:16px 20px 4px;margin-bottom:12px;">
+          <h3 style="display:flex;justify-content:space-between;align-items:center;margin:0;">
+            <span>despesas realizadas por categoria</span>
+            <span id="realizadoTotalDespesa" style="font-family:'Baloo 2';font-size:18px;color:var(--muted);">R$ 0,00</span>
+          </h3>
+        </div>
+        <div id="realizadoListDespesa"></div>
+      </div>
+      <div class="prev-col prev-col-receita">
+        <div class="prev-col-title">receitas</div>
+        <div class="panel" style="padding:16px 20px 4px;margin-bottom:12px;">
+          <h3 style="display:flex;justify-content:space-between;align-items:center;margin:0;">
+            <span>receitas realizadas por categoria</span>
+            <span id="realizadoTotalReceita" style="font-family:'Baloo 2';font-size:18px;color:var(--muted);">R$ 0,00</span>
+          </h3>
+        </div>
+        <div id="realizadoListReceita"></div>
+      </div>
     </div>
-    <div id="realizadoList"></div>
+  </section>
+
+  <!-- INVESTIMENTOS -->
+  <section id="view-investimentos" class="view">
+    <div class="invest-hero">
+      <div class="invest-hero-label">valor investido</div>
+      <div class="invest-hero-value" id="investHeroValue">R$ 0,00</div>
+      <div class="invest-hero-actions">
+        <button type="button" class="btn-cta" id="btnAportar" style="display:inline-flex;">+ aportar</button>
+        <button type="button" class="btn-cta invest-hero-retirar" id="btnRetirar" style="display:inline-flex;">− retirar</button>
+      </div>
+    </div>
+
+    <div class="panel" style="text-align:center;">
+      <h3 style="margin-bottom:8px;">projete seu futuro</h3>
+      <p class="dialog-msg" style="margin-bottom:16px;">quer ver até onde seu patrimônio pode chegar, se seguir o que já planejou?</p>
+      <button type="button" class="btn-cta" id="btnSimular" style="display:inline-flex;">simular patrimônio futuro</button>
+    </div>
+
+    <div class="panel">
+      <h3>evolução do valor investido</h3>
+      <div class="chart-wrap" style="height:280px;"><canvas id="investimentosChart"></canvas></div>
+    </div>
+
+    <div class="panel">
+      <h3>aporte manual x rendimento automático</h3>
+      <div class="invest-breakdown">
+        <div class="invest-breakdown-card aporte">
+          <span class="invest-breakdown-dot"></span>
+          <div class="invest-breakdown-label">aporte manual</div>
+          <div class="invest-breakdown-value" id="investAporteValue">R$ 0,00</div>
+          <div class="invest-breakdown-sub">categoria "Investimento"</div>
+        </div>
+        <div class="invest-breakdown-card rendimento">
+          <span class="invest-breakdown-dot"></span>
+          <div class="invest-breakdown-label">rendimento automático</div>
+          <div class="invest-breakdown-value" id="investRendimentoValue">R$ 0,00</div>
+          <div class="invest-breakdown-sub">categoria "Rendimento"</div>
+        </div>
+      </div>
+      <div class="invest-breakdown-bar"><div class="invest-breakdown-bar-fill" id="investBreakdownBarFill" style="width:0%;"></div></div>
+    </div>
+
+    <div class="panel">
+      <h3>histórico de movimentações</h3>
+      <div id="investHistoryList"></div>
+    </div>
   </section>
 
   <div class="bulk-move-bar" id="bulkMoveBar">
@@ -369,6 +453,82 @@
   </div>
 </div>
 
+<!-- APORTAR (Investimentos tab) -->
+<div class="modal-overlay" id="aportarModalOverlay">
+  <div class="modal" style="max-width:380px;">
+    <button class="close-x" id="aportarModalClose">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    </button>
+    <h2>aportar</h2>
+    <div class="field">
+      <label>mês do aporte</label>
+      <input type="month" id="aportarMonth">
+    </div>
+    <div class="field">
+      <label>valor (R$)</label>
+      <input type="text" inputmode="decimal" id="aportarAmount" placeholder="0,00">
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="aportarCancel">cancelar</button>
+      <button type="button" class="btn-primary" id="aportarSaveBtn">aportar</button>
+    </div>
+  </div>
+</div>
+
+<!-- RETIRAR (Investimentos tab) -->
+<div class="modal-overlay" id="retirarModalOverlay">
+  <div class="modal" style="max-width:380px;">
+    <button class="close-x" id="retirarModalClose">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    </button>
+    <h2>retirar do investido</h2>
+    <div class="field">
+      <label>mês da retirada</label>
+      <input type="month" id="retirarMonth">
+    </div>
+    <div class="field">
+      <label>valor (R$)</label>
+      <input type="text" inputmode="decimal" id="retirarAmount" placeholder="0,00">
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="retirarCancel">cancelar</button>
+      <button type="button" class="btn-primary" id="retirarSaveBtn">retirar</button>
+    </div>
+  </div>
+</div>
+
+<!-- SIMULAR PATRIMÔNIO FUTURO (Investimentos tab) -->
+<div class="modal-overlay" id="simModalOverlay">
+  <div class="modal" style="max-width:460px;">
+    <button class="close-x" id="simModalClose">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    </button>
+    <h2>simular patrimônio futuro</h2>
+
+    <div id="simIntro">
+      <p class="dialog-msg">escolhe até quando quer projetar — a simulação usa o que você já planejou em receitas e despesas previstas.</p>
+      <div class="sim-shortcuts">
+        <button type="button" class="btn-secondary" id="simShortcutYear">até o fim do ano</button>
+        <button type="button" class="btn-secondary" id="simShortcut3">próximos 3 meses</button>
+        <button type="button" class="btn-secondary" id="simShortcut6">próximos 6 meses</button>
+      </div>
+      <div class="sim-divider">ou escolhe um período customizado</div>
+      <div class="month-nav" style="justify-content:center;margin-bottom:16px;">
+        <button type="button" id="simCustomPrev" aria-label="mês anterior">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="month-label" id="simCustomLabel" style="font-size:17px;">—</div>
+        <button type="button" id="simCustomNext" aria-label="próximo mês">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <button type="button" class="btn-primary" id="simCustomBtn" style="width:100%;justify-content:center;">calcular até este mês</button>
+    </div>
+
+    <div id="simResult" style="display:none;"></div>
+  </div>
+</div>
+
 <!-- LEMBRETE DE CONTAS DO DIA -->
 <div class="modal-overlay" id="reminderOverlay">
   <div class="modal" style="max-width:400px;">
@@ -416,6 +576,7 @@
 <script src="js/supabase-client.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/data-layer.js"></script>
+<script src="js/onboarding.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

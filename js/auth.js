@@ -17,10 +17,13 @@ let currentUser = null;
 function showAuthOverlay(){
   const el = document.getElementById('authOverlay');
   if(el) el.classList.add('open');
+  document.body.style.overflow = 'hidden'; // trava o scroll do painel por trás enquanto o login está aberto
 }
 function hideAuthOverlay(){
   const el = document.getElementById('authOverlay');
   if(el) el.classList.remove('open');
+  document.body.style.overflow = '';
+  window.scrollTo(0, 0); // garante que o painel abra sempre do topo, não de onde o fundo ficou rolado
 }
 function setAuthError(msg){
   const el = document.getElementById('authError');

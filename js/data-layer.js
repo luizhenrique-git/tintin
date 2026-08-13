@@ -240,6 +240,15 @@ async function dbSetInvestedBase(value){
   const { error } = await supabaseClient.from('profiles').update({ invested_base: value }).eq('id', currentUser.id);
   if(error) throw error;
 }
+async function dbGetOnboardingStatus(){
+  const { data, error } = await supabaseClient.from('profiles').select('onboarding_completed').eq('id', currentUser.id).single();
+  if(error) throw error;
+  return !!data.onboarding_completed;
+}
+async function dbCompleteOnboarding(){
+  const { error } = await supabaseClient.from('profiles').update({ onboarding_completed: true }).eq('id', currentUser.id);
+  if(error) throw error;
+}
 
 // ---------------------------------------------------------------------
 // SALDO INICIAL (overrides manuais por mês)

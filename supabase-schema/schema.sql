@@ -25,6 +25,11 @@ create table public.profiles (
   -- ponto de partida do "Valor Investido" (equivalente ao antigo
   -- state.investedBase) — a partir daqui, os aportes/rendimentos
   -- calculados em runtime vão sendo somados em cima disso.
+  onboarding_completed boolean not null default true,
+  -- controla se a pessoa já passou pelo wizard de "primeiros passos".
+  -- default true aqui é só pra instalações novas do zero; o trigger
+  -- handle_new_user() abaixo insere false explicitamente pra cada
+  -- conta nova, que é o caso que realmente importa em produção.
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -134,7 +139,7 @@ create index idx_budget_items_series on public.budget_items(series_id);
 
 -- =====================================================================
 -- 5. SALDO_INICIAL_OVERRIDES
--- Ajuste manual do "saldo em conta" de um mês específico (equivalente
+-- Ajuste manual do "saldo inicial" de um mês específico (equivalente
 -- ao campo editável no Mapa). Quando não existe linha aqui pro mês,
 -- o app calcula automático como soma de budget_items.
 -- =====================================================================
@@ -199,8 +204,8 @@ create policy "usuário só mexe nos próprios lembretes"
 create or replace function public.handle_new_user()
 returns trigger as $$
 begin
-  insert into public.profiles (id, email, display_name)
-  values (new.id, new.email, coalesce(new.raw_user_meta_data->>'display_name', new.email));
+  insert into public.profiles (id, email, display_name, onboarding_completed)
+  values (new.id, new.email, coalesce(new.raw_user_meta_data->>'display_name', new.email), false);
   return new;
 end;
 $$ language plpgsql security definer;

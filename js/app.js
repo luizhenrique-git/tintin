@@ -75,15 +75,15 @@ let state = {
 let currentMonth; // "YYYY-MM"
 let saldosMonth; // "YYYY-MM" — independent month cursor for the Saldos tab
 let previsaoMonth; // "YYYY-MM" — independent month cursor for the Previsão tab
-let previsaoType = 'despesa'; // 'despesa' | 'receita' — which list the Previsão tab is showing
+let budgetModalType = 'despesa'; // 'despesa' | 'receita' — type of the item being created/edited in the budget item modal
 let receitaCardMode = 'realizado'; // 'realizado' | 'previsto' — which value the dashboard's receitas card shows
 let economiaCardMode = 'realizado'; // 'realizado' | 'previsto' — which value the dashboard's economia card shows
+let despesaCardMode = 'realizado'; // 'realizado' | 'previsto' — which value the dashboard's gasto realizado card shows
 let realizadoMonth; // "YYYY-MM" — independent month cursor for the Realizado tab
-let realizadoType = 'despesa'; // 'despesa' | 'receita' — which list the Realizado tab is showing
 let selectedTxIds = new Set(); // ids currently checked for bulk category move in Realizado
 let editingId = null;
 let modalType = 'despesa';
-let pieChart = null, barChart = null;
+let pieChart = null, barChart = null, investidoChart = null, investimentosChart = null;
 
 const PALETTE = ['#F4622C','#4B21C4','#1F8C4C','#C9A227','#D45B90','#2E7BBF','#8B5E3C','#3FA796','#B23A48','#6C5CE7','#E08E45','#2F6B4F','#9B5DE5','#D8A048','#5E8C61','#C4497A'];
 function colorFor(name){
@@ -281,6 +281,7 @@ document.querySelectorAll('.tab').forEach(btn=>{
     if(btn.dataset.tab==='dashboard') renderDashboard();
     if(btn.dataset.tab==='saldos') renderSaldos();
     if(btn.dataset.tab==='previsao') renderPrevisao();
+    if(btn.dataset.tab==='investimentos') renderInvestimentos();
   });
 });
 
@@ -301,18 +302,20 @@ document.getElementById('prevMonth').addEventListener('click', ()=>{ currentMont
 document.getElementById('nextMonth').addEventListener('click', ()=>{ currentMonth = shiftMonth(currentMonth,1); renderDashboard(); });
 
 const RENDIMENTO_AUTO_CUTOFF = '2026-08-01'; // Rendimento antes disso já está embutido no investedBase corrigido; só conta automático a partir daqui
-function computeValorInvestido(){
-  const today = todayISO();
+function computeValorInvestidoAsOf(dateStr){
   let v = state.investedBase || 0;
   state.transactions.forEach(t=>{
-    if(t.category==='Investimento' && t.date<=today){
+    if(t.category==='Investimento' && t.date<=dateStr){
       v += (t.type==='despesa' ? t.amount : -t.amount);
     }
-    if(t.category==='Rendimento' && t.type==='receita' && t.date<=today && t.date>=RENDIMENTO_AUTO_CUTOFF){
+    if(t.category==='Rendimento' && t.type==='receita' && t.date<=dateStr && t.date>=RENDIMENTO_AUTO_CUTOFF){
       v += t.amount;
     }
   });
   return v;
+}
+function computeValorInvestido(){
+  return computeValorInvestidoAsOf(todayISO());
 }
 function txForMonth(ym){
   return state.transactions.filter(t=>t.date.slice(0,7)===ym);
@@ -354,6 +357,13 @@ document.querySelectorAll('#economiaModeToggle button').forEach(btn=>{
     renderDashboard();
   });
 });
+document.querySelectorAll('#despesaModeToggle button').forEach(btn=>{
+  btn.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    despesaCardMode = btn.dataset.dm;
+    renderDashboard();
+  });
+});
 function renderDashboard(){
   document.getElementById('monthLabel').textContent = monthLabelOf(currentMonth);
   const monthTx = txForMonth(currentMonth);
@@ -371,22 +381,30 @@ function renderDashboard(){
   }
   document.querySelectorAll('#receitaModeToggle button').forEach(b=>b.classList.toggle('active', b.dataset.rm===receitaCardMode));
 
-  // saldo em conta: total da previsão do mês (ou override manual)
+  // saldo inicial: total da previsão do mês (ou override manual)
   const previstoMes = computeSaldoInicialDoMes(currentMonth);
   const saldoContaEl = document.getElementById('statSaldoConta');
   saldoContaEl.textContent = previstoMes>0 ? fmtBRL(previstoMes) : 'sem previsão';
 
-  // gasto realizado: despesas reais do mês, com % do saldo em conta usado no tooltip
+  // gasto realizado: despesas reais do mês, com % do saldo inicial usado no tooltip
   const despEl = document.getElementById('statDespesa');
   const despSubEl = document.getElementById('statDespesaSub');
-  despEl.textContent = fmtBRL(despesas);
-  if(previstoMes>0){
-    const pct = Math.round(despesas/previstoMes*100);
-    despEl.className = 'stat-value ' + (despesas>previstoMes ? 'neg' : '');
-    despSubEl.textContent = `${pct}% do saldo em conta (${fmtBRL(previstoMes)}) usado`;
-  } else {
+  const despesasPrevistas = computeBudgetTotal(currentMonth, 'despesa');
+  document.querySelectorAll('#despesaModeToggle button').forEach(b=>b.classList.toggle('active', b.dataset.dm===despesaCardMode));
+  if(despesaCardMode==='previsto'){
+    despEl.textContent = despesasPrevistas>0 ? fmtBRL(despesasPrevistas) : 'sem previsão';
     despEl.className = 'stat-value';
-    despSubEl.textContent = 'sem previsão cadastrada para este mês';
+    despSubEl.textContent = despesasPrevistas>0 ? 'total previsto de despesas para este mês' : 'sem previsão cadastrada para este mês';
+  } else {
+    despEl.textContent = fmtBRL(despesas);
+    if(previstoMes>0){
+      const pct = Math.round(despesas/previstoMes*100);
+      despEl.className = 'stat-value ' + (despesas>previstoMes ? 'neg' : '');
+      despSubEl.textContent = `${pct}% do saldo inicial (${fmtBRL(previstoMes)}) usado`;
+    } else {
+      despEl.className = 'stat-value';
+      despSubEl.textContent = 'sem previsão cadastrada para este mês';
+    }
   }
 
   // economia do mês: receita líquida (descontando estouro e o Rendimento, que já vai automático pro investido) - previsão do mês seguinte
@@ -426,11 +444,15 @@ function renderDashboard(){
       + (previstoProximo>0 ? `<br>(Previsão de ${monthLabelOf(nextMonth)}): −${fmtBRL(previstoProximo)}` : `<br>cadastre a previsão de ${monthLabelOf(nextMonth)} pra este número fazer sentido`);
   }
 
-  const previsaoItems = state.budgetItems.filter(b=>b.month===currentMonth).map(b=>({category:b.category, amount:b.amount, type:'despesa'}));
+  const previsaoItems = state.budgetItems.filter(b=>b.month===currentMonth && (b.type||'despesa')==='despesa').map(b=>({category:b.category, amount:b.amount, type:'despesa'}));
   document.getElementById('pieTitleDespesa').textContent = previsaoItems.length ? 'despesas previstas por categoria' : 'despesas por categoria';
   renderPie(previsaoItems.length ? previsaoItems : monthTxReal);
-  renderPieReceita(monthTxReal);
+
+  const previsaoItemsReceita = state.budgetItems.filter(b=>b.month===currentMonth && (b.type||'despesa')==='receita').map(b=>({category:b.category, amount:b.amount, type:'receita'}));
+  document.getElementById('pieTitleReceita').textContent = previsaoItemsReceita.length ? 'receitas previstas por categoria' : 'receitas por categoria';
+  renderPieReceita(previsaoItemsReceita.length ? previsaoItemsReceita : monthTxReal);
   renderBar();
+  renderInvestidoChart();
 }
 
 let pieChartReceita = null;
@@ -512,7 +534,7 @@ async function gerarRelatorioPDF(){
     const rows = [
       ['valor investido (total)', fmtBRL(valorInvestido)],
       ['receita do mês', fmtBRL(receitas)],
-      ['saldo em conta (previsto)', previstoMes>0?fmtBRL(previstoMes):'sem previsão'],
+      ['saldo inicial (previsto)', previstoMes>0?fmtBRL(previstoMes):'sem previsão'],
       ['gasto realizado', fmtBRL(despesas) + (previstoMes>0?`  (${Math.round(despesas/previstoMes*100)}% do previsto)`:'')],
       ['economia do mês', fmtBRL(economia)]
     ];
@@ -528,7 +550,7 @@ async function gerarRelatorioPDF(){
     doc.setFont('helvetica','bold'); doc.setFontSize(10.5);
     if(overrun>0){
       doc.setTextColor(217,73,26);
-      doc.text(`estourou o saldo em conta em ${fmtBRL(overrun)}`, 14, y);
+      doc.text(`estourou o saldo inicial em ${fmtBRL(overrun)}`, 14, y);
     } else if(previstoMes>0){
       doc.setTextColor(31,140,76);
       doc.text('dentro do previsto', 14, y);
@@ -605,6 +627,7 @@ function renderBar(){
   for(let i=0;i<6;i++){ months.unshift(m); m = shiftMonth(m,-1); }
   const receitas = months.map(ym=> txForMonth(ym).filter(t=>t.type==='receita' && t.category!=='Investimento').reduce((s,t)=>s+t.amount,0));
   const despesas = months.map(ym=> txForMonth(ym).filter(t=>t.type==='despesa' && t.category!=='Investimento').reduce((s,t)=>s+t.amount,0));
+  const resultado = months.map((ym,i)=> receitas[i]-despesas[i]);
   const ctx = document.getElementById('barChart').getContext('2d');
   if(barChart) barChart.destroy();
   barChart = new Chart(ctx, {
@@ -613,7 +636,8 @@ function renderBar(){
       labels: months.map(ym=>monthLabelOf(ym).split(' de ')[0].slice(0,3)),
       datasets:[
         { label:'receitas', data:receitas, backgroundColor:'#8FE0A8', borderRadius:8, maxBarThickness:34 },
-        { label:'despesas', data:despesas, backgroundColor:'#F4622C', borderRadius:8, maxBarThickness:34 }
+        { label:'despesas', data:despesas, backgroundColor:'#F4622C', borderRadius:8, maxBarThickness:34 },
+        { label:'resultado do mês', data:resultado, type:'line', borderColor:'#10231A', backgroundColor:'#10231A', borderWidth:2.5, pointRadius:3, pointBackgroundColor:'#10231A', tension:0.3, fill:false, order:0 }
       ]
     },
     options:{
@@ -622,6 +646,331 @@ function renderBar(){
       scales:{ y:{ ticks:{ callback:(v)=> 'R$'+v/1000+'k' }, grid:{ color:'#F0EAD9' } }, x:{ grid:{ display:false } } }
     }
   });
+}
+function renderInvestidoChart(){
+  const months = [];
+  let m = currentMonth;
+  for(let i=0;i<6;i++){ months.unshift(m); m = shiftMonth(m,-1); }
+  const today = todayISO();
+  const data = months.map(ym=>{
+    const asOf = (ym===today.slice(0,7)) ? today : lastDayOfMonth(ym);
+    return computeValorInvestidoAsOf(asOf);
+  });
+  const dataMin = Math.min(...data);
+  const dataMax = Math.max(...data);
+  const range = dataMax - dataMin;
+  const pad = range > 0 ? range * 0.25 : Math.max(dataMax * 0.02, 50);
+  const ctx = document.getElementById('investidoChart').getContext('2d');
+  if(investidoChart) investidoChart.destroy();
+  investidoChart = new Chart(ctx, {
+    type:'line',
+    data:{
+      labels: months.map(ym=>monthLabelOf(ym).split(' de ')[0].slice(0,3)),
+      datasets:[
+        { label:'valor investido', data, borderColor:'#C6F135', backgroundColor:'rgba(198,241,53,0.25)', borderWidth:2.5, pointRadius:3, pointBackgroundColor:'#C6F135', tension:0.3, fill:true }
+      ]
+    },
+    options:{
+      maintainAspectRatio:false,
+      plugins:{ legend:{ display:false } },
+      scales:{
+        y:{ suggestedMin: dataMin - pad, suggestedMax: dataMax + pad, ticks:{ callback:(v)=> 'R$'+v/1000+'k' }, grid:{ color:'#F0EAD9' } },
+        x:{ grid:{ display:false } }
+      }
+    }
+  });
+}
+
+/* ---------------- Investimentos ---------------- */
+// contribuição de uma transação pro valor investido, só pra exibição de sinal
+// no extrato — espelha a mesma convenção usada em computeValorInvestidoAsOf,
+// sem alterar aquela função.
+function investContribution(t){
+  if(t.category==='Investimento') return t.type==='despesa' ? t.amount : -t.amount;
+  if(t.category==='Rendimento') return t.type==='receita' ? t.amount : -t.amount;
+  return 0;
+}
+function computeInvestBreakdown(){
+  const today = todayISO();
+  let aporte = state.investedBase || 0;
+  let rendimento = 0;
+  state.transactions.forEach(t=>{
+    if(t.category==='Investimento' && t.date<=today){
+      aporte += (t.type==='despesa' ? t.amount : -t.amount);
+    }
+    if(t.category==='Rendimento' && t.type==='receita' && t.date<=today && t.date>=RENDIMENTO_AUTO_CUTOFF){
+      rendimento += t.amount;
+    }
+  });
+  return { aporte, rendimento };
+}
+function renderInvestimentosChart(){
+  const sortedMonths = allMonthsSorted();
+  const today = todayISO();
+  const lastMonth = today.slice(0,7);
+  const firstMonth = sortedMonths[0] || lastMonth;
+  const months = [];
+  let m = firstMonth;
+  while(m <= lastMonth){ months.push(m); m = shiftMonth(m, 1); }
+  const data = months.map(ym=>{
+    const asOf = (ym===lastMonth) ? today : lastDayOfMonth(ym);
+    return computeValorInvestidoAsOf(asOf);
+  });
+  const dataMin = Math.min(...data);
+  const dataMax = Math.max(...data);
+  const range = dataMax - dataMin;
+  const pad = range > 0 ? range * 0.15 : Math.max(dataMax * 0.02, 50);
+  const monthAbbrev = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+  const labels = months.map(ym=>{
+    const [y,mm] = ym.split('-');
+    return monthAbbrev[parseInt(mm,10)-1]+'/'+y.slice(2);
+  });
+  const ctx = document.getElementById('investimentosChart').getContext('2d');
+  if(investimentosChart) investimentosChart.destroy();
+  investimentosChart = new Chart(ctx, {
+    type:'line',
+    data:{
+      labels,
+      datasets:[
+        { label:'valor investido', data, borderColor:'#C6F135', backgroundColor:'rgba(198,241,53,0.22)', borderWidth:2.5, pointRadius: months.length>18?0:3, pointBackgroundColor:'#C6F135', tension:0.3, fill:true }
+      ]
+    },
+    options:{
+      maintainAspectRatio:false,
+      plugins:{ legend:{ display:false } },
+      scales:{
+        y:{ suggestedMin: dataMin - pad, suggestedMax: dataMax + pad, ticks:{ callback:(v)=> 'R$'+v/1000+'k' }, grid:{ color:'#F0EAD9' } },
+        x:{ grid:{ display:false }, ticks:{ maxRotation:0, autoSkip:true, maxTicksLimit:12 } }
+      }
+    }
+  });
+}
+function renderInvestHistory(){
+  const items = state.transactions
+    .filter(t=> t.category==='Investimento' || t.category==='Rendimento')
+    .slice()
+    .sort((a,b)=> b.date.localeCompare(a.date));
+  const list = document.getElementById('investHistoryList');
+  if(items.length===0){
+    list.innerHTML = `<div class="prev-empty">nenhuma movimentação registrada ainda</div>`;
+    return;
+  }
+  list.innerHTML = items.map(t=>{
+    const contribution = investContribution(t);
+    const sign = contribution>=0 ? 'pos' : 'neg';
+    const amtText = contribution>=0 ? '+'+fmtBRL(contribution) : fmtBRL(contribution);
+    return `<div class="invest-history-row">
+      <span class="ihdate">${fmtDate(t.date).slice(0,5)}</span>
+      <span class="ihdesc">${escapeHtml(t.desc)}<span class="ihcat">${escapeHtml(t.category)}</span></span>
+      <span class="ihamt ${sign}">${amtText}</span>
+    </div>`;
+  }).join('');
+}
+function renderInvestimentos(){
+  document.getElementById('investHeroValue').textContent = fmtBRL(computeValorInvestido());
+  const { aporte, rendimento } = computeInvestBreakdown();
+  document.getElementById('investAporteValue').textContent = fmtBRL(aporte);
+  document.getElementById('investRendimentoValue').textContent = fmtBRL(rendimento);
+  const total = aporte + rendimento;
+  const rendimentoPct = total>0 ? Math.max(0, Math.min(100, rendimento/total*100)) : 0;
+  document.getElementById('investBreakdownBarFill').style.width = rendimentoPct+'%';
+  renderInvestimentosChart();
+  renderInvestHistory();
+}
+
+/* --- aportar (aporte manual) --- */
+const aportarOverlay = document.getElementById('aportarModalOverlay');
+function openAportarModal(){
+  document.getElementById('aportarMonth').value = todayISO().slice(0,7);
+  document.getElementById('aportarAmount').value = '';
+  [document.getElementById('aportarMonth'), document.getElementById('aportarAmount')].forEach(el=>el.classList.remove('invalid'));
+  aportarOverlay.classList.add('open');
+  setTimeout(()=>document.getElementById('aportarAmount').focus(), 60);
+}
+function closeAportarModal(){ aportarOverlay.classList.remove('open'); }
+document.getElementById('btnAportar').addEventListener('click', openAportarModal);
+document.getElementById('aportarModalClose').addEventListener('click', closeAportarModal);
+document.getElementById('aportarCancel').addEventListener('click', closeAportarModal);
+aportarOverlay.addEventListener('click', (e)=>{ if(e.target===aportarOverlay) closeAportarModal(); });
+document.getElementById('aportarSaveBtn').addEventListener('click', async ()=>{
+  const monthEl = document.getElementById('aportarMonth');
+  const amountEl = document.getElementById('aportarAmount');
+  [monthEl, amountEl].forEach(el=>el.classList.remove('invalid'));
+  const month = monthEl.value;
+  const amount = parseAmount(amountEl.value);
+  const invalids = [];
+  if(!month) invalids.push(monthEl);
+  if(amountEl.value==='' || isNaN(amount) || amount<=0) invalids.push(amountEl);
+  if(invalids.length){
+    invalids.forEach(el=>el.classList.add('invalid'));
+    invalids[0].focus();
+    showToast('preencha os campos destacados em laranja');
+    return;
+  }
+  pushUndo();
+  const today = todayISO();
+  // se for o mês atual, usa a data de hoje (senão a data ficaria no futuro,
+  // já que o último dia do mês corrente ainda não chegou, e o aporte não
+  // apareceria no valor investido até lá); em meses passados, usa o último dia
+  const aporteDate = (month===today.slice(0,7)) ? today : lastDayOfMonth(month);
+  state.transactions.push({
+    id: crypto.randomUUID(),
+    date: aporteDate,
+    desc: 'Aporte manual',
+    category: 'Investimento',
+    type: 'despesa',
+    amount,
+    tags: ['aporte-manual']
+  });
+  await persistTx();
+  closeAportarModal();
+  renderDashboard();
+  renderInvestimentos();
+  showToast('tintin! aporte registrado', true);
+});
+
+/* --- retirar (resgate manual) --- */
+const retirarOverlay = document.getElementById('retirarModalOverlay');
+function openRetirarModal(){
+  document.getElementById('retirarMonth').value = todayISO().slice(0,7);
+  document.getElementById('retirarAmount').value = '';
+  [document.getElementById('retirarMonth'), document.getElementById('retirarAmount')].forEach(el=>el.classList.remove('invalid'));
+  retirarOverlay.classList.add('open');
+  setTimeout(()=>document.getElementById('retirarAmount').focus(), 60);
+}
+function closeRetirarModal(){ retirarOverlay.classList.remove('open'); }
+document.getElementById('btnRetirar').addEventListener('click', openRetirarModal);
+document.getElementById('retirarModalClose').addEventListener('click', closeRetirarModal);
+document.getElementById('retirarCancel').addEventListener('click', closeRetirarModal);
+retirarOverlay.addEventListener('click', (e)=>{ if(e.target===retirarOverlay) closeRetirarModal(); });
+document.getElementById('retirarSaveBtn').addEventListener('click', async ()=>{
+  const monthEl = document.getElementById('retirarMonth');
+  const amountEl = document.getElementById('retirarAmount');
+  [monthEl, amountEl].forEach(el=>el.classList.remove('invalid'));
+  const month = monthEl.value;
+  const amount = parseAmount(amountEl.value);
+  const invalids = [];
+  if(!month) invalids.push(monthEl);
+  if(amountEl.value==='' || isNaN(amount) || amount<=0) invalids.push(amountEl);
+  if(invalids.length){
+    invalids.forEach(el=>el.classList.add('invalid'));
+    invalids[0].focus();
+    showToast('preencha os campos destacados em laranja');
+    return;
+  }
+  pushUndo();
+  const today = todayISO();
+  // mesma regra do aporte: mês atual usa a data de hoje, meses passados usam o último dia
+  const retiradaDate = (month===today.slice(0,7)) ? today : lastDayOfMonth(month);
+  state.transactions.push({
+    id: crypto.randomUUID(),
+    date: retiradaDate,
+    desc: 'Retirada de investimento',
+    category: 'Investimento',
+    type: 'receita', // receita na categoria "Investimento" = resgate, reduz o valor investido (mesma convenção de computeValorInvestidoAsOf)
+    amount,
+    tags: ['retirada-manual']
+  });
+  await persistTx();
+  closeRetirarModal();
+  renderDashboard();
+  renderInvestimentos();
+  showToast('tintin! retirada registrada', true);
+});
+
+/* --- simular patrimônio futuro --- */
+// pura função de cálculo: reusa computeValorInvestido() como ponto de partida
+// e computeBudgetTotal() mês a mês — não mexe em nenhuma das duas.
+function computeSimulacaoPatrimonio(endMonth){
+  const startValue = computeValorInvestido();
+  const today = todayISO();
+  const startMonth = today.slice(0,7);
+  const months = [];
+  let m = startMonth;
+  while(m <= endMonth){
+    const receita = computeBudgetTotal(m, 'receita');
+    const despesa = computeBudgetTotal(m, 'despesa');
+    const hasPrevisao = receita>0 || despesa>0;
+    months.push({ month:m, economia: receita-despesa, hasPrevisao });
+    m = shiftMonth(m, 1);
+  }
+  const total = months.reduce((acc,mo)=> acc + (mo.hasPrevisao ? mo.economia : 0), startValue);
+  const missingCount = months.filter(mo=>!mo.hasPrevisao).length;
+  return { startValue, endMonth, months, total, missingCount };
+}
+
+const simOverlay = document.getElementById('simModalOverlay');
+let simCustomMonth = null;
+
+function updateSimCustomLabel(){
+  document.getElementById('simCustomLabel').textContent = monthLabelOf(simCustomMonth);
+}
+function openSimModal(){
+  document.getElementById('simIntro').style.display = '';
+  document.getElementById('simResult').style.display = 'none';
+  simCustomMonth = shiftMonth(todayISO().slice(0,7), 1);
+  updateSimCustomLabel();
+  simOverlay.classList.add('open');
+}
+function closeSimModal(){ simOverlay.classList.remove('open'); }
+document.getElementById('btnSimular').addEventListener('click', openSimModal);
+document.getElementById('simModalClose').addEventListener('click', closeSimModal);
+simOverlay.addEventListener('click', (e)=>{ if(e.target===simOverlay) closeSimModal(); });
+
+document.getElementById('simCustomPrev').addEventListener('click', ()=>{
+  const minMonth = todayISO().slice(0,7);
+  const prev = shiftMonth(simCustomMonth, -1);
+  if(prev < minMonth) return; // não simula pra trás do mês atual
+  simCustomMonth = prev;
+  updateSimCustomLabel();
+});
+document.getElementById('simCustomNext').addEventListener('click', ()=>{
+  simCustomMonth = shiftMonth(simCustomMonth, 1);
+  updateSimCustomLabel();
+});
+document.getElementById('simCustomBtn').addEventListener('click', ()=> renderSimResult(simCustomMonth));
+document.getElementById('simShortcutYear').addEventListener('click', ()=> renderSimResult(todayISO().slice(0,4)+'-12'));
+document.getElementById('simShortcut3').addEventListener('click', ()=> renderSimResult(shiftMonth(todayISO().slice(0,7), 3)));
+document.getElementById('simShortcut6').addEventListener('click', ()=> renderSimResult(shiftMonth(todayISO().slice(0,7), 6)));
+
+function renderSimResult(endMonth){
+  const sim = computeSimulacaoPatrimonio(endMonth);
+  // soma só do que o período em si deve gerar, sem contar o que já está investido
+  // hoje — derivado dos mesmos números que computeSimulacaoPatrimonio já calculou.
+  const periodSum = sim.total - sim.startValue;
+  const startLabel = monthLabelOf(sim.months[0].month);
+  const endLabel = monthLabelOf(endMonth);
+  const periodLabel = startLabel===endLabel ? startLabel : `${startLabel} até ${endLabel}`;
+  const warningHtml = sim.missingCount>0
+    ? `<div class="sim-warning">faltam ${sim.missingCount} ${sim.missingCount===1?'mês':'meses'} sem previsão cadastrada — a simulação considera só os meses já planejados.</div>`
+    : '';
+  const monthRowsHtml = sim.months.map(mo=>`
+    <div class="sim-month-row${mo.hasPrevisao?'':' empty'}">
+      <span>${monthLabelOf(mo.month)}</span>
+      <span class="smv">${mo.hasPrevisao ? fmtBRL(mo.economia) : 'sem previsão'}</span>
+    </div>`).join('');
+  document.getElementById('simIntro').style.display = 'none';
+  const resultEl = document.getElementById('simResult');
+  resultEl.style.display = '';
+  resultEl.innerHTML = `
+    <div class="sim-result-label">patrimônio projetado até ${endLabel}</div>
+    <div class="sim-result-value">${fmtBRL(sim.total)}</div>
+    <p class="sim-result-context">se você seguir exatamente o que planejou até aqui, é isso que seu patrimônio investido deve valer nessa data.</p>
+    <div class="sim-result-secondary">
+      <div class="sim-result-secondary-label">só o que ${periodLabel} deve gerar (sem contar o que você já tem investido hoje)</div>
+      <div class="sim-result-secondary-value ${periodSum>=0?'pos':'neg'}">${periodSum>=0?'+':''}${fmtBRL(periodSum)}</div>
+    </div>
+    ${warningHtml}
+    <div class="sim-month-list">${monthRowsHtml}</div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="simBack">simular outro período</button>
+      <button type="button" class="btn-primary" id="simDone">fechar</button>
+    </div>`;
+  document.getElementById('simBack').addEventListener('click', ()=>{
+    document.getElementById('simIntro').style.display = '';
+    resultEl.style.display = 'none';
+  });
+  document.getElementById('simDone').addEventListener('click', closeSimModal);
 }
 
 /* ---------------- Saldos ---------------- */
@@ -746,7 +1095,7 @@ function renderDayDetailsModal(dateStr, type){
     <div class="daydetail-row previsto">
       <span class="ddesc">${escapeHtml(b.category)} — ${escapeHtml(b.desc)} <span class="muted-tag">(previsto)</span></span>
       <span class="damt">${fmtBRL(b.amount)}</span>
-      <button type="button" class="btn-pago" onclick="markBudgetItemPaid(${b.id})">pago</button>
+      <button type="button" class="btn-pago" onclick="markBudgetItemPaid('${b.id}')">pago</button>
     </div>`).join('');
   list.innerHTML = (realHtml + forecastHtml) || '<div class="prev-empty">nada neste dia</div>';
   const total = realItems.reduce((s,t)=>s+t.amount,0) + forecastItems.reduce((s,b)=>s+b.amount,0);
@@ -768,11 +1117,26 @@ window.markBudgetItemPaid = async function(id){
       showToast('erro: não encontrei essa despesa/receita prevista (id inválido) — tenta fechar e abrir o dia de novo');
       return;
     }
+    const defaultValue = item.amount.toFixed(2).replace('.', ',');
+    const input = await showDialog({
+      title: 'confirmar pagamento',
+      message: `confirmar pagamento de "${item.desc}"? ajuste o valor abaixo se ele veio diferente do previsto:`,
+      withInput: true,
+      defaultValue,
+      okLabel: 'confirmar'
+    });
+    if(input===null) return; // cancelado
+    const finalAmount = parseAmount(input);
+    if(isNaN(finalAmount) || finalAmount<=0){
+      showToast('valor inválido, tenta de novo');
+      return;
+    }
+
     pushUndo();
     const nid = crypto.randomUUID();
     state.transactions.push({
       id: nid, date: item.date, desc: item.desc, category: item.category,
-      amount: item.amount, type: item.type||'despesa', tags: ['pago-da-previsao']
+      amount: finalAmount, type: item.type||'despesa', tags: ['pago-da-previsao']
     });
     item.paid = true; // stays in the month's fixed ceiling total, just excluded from "still pending" views
     await persistTx();
@@ -809,42 +1173,48 @@ function lastDayOfMonth(ym){
 }
 document.getElementById('prevPrevMonth').addEventListener('click', ()=>{ previsaoMonth = shiftMonth(previsaoMonth,-1); renderPrevisao(); });
 document.getElementById('prevNextMonth').addEventListener('click', ()=>{ previsaoMonth = shiftMonth(previsaoMonth,1); renderPrevisao(); });
+document.getElementById('previsaoBusca').addEventListener('input', renderPrevisao);
 
 function renderPrevisao(){
   document.getElementById('previsaoMonthLabel').textContent = monthLabelOf(previsaoMonth);
-  const isDespesa = previsaoType==='despesa';
+  renderPrevisaoColumn('despesa', 'previsaoListDespesa', 'previsaoTotalDespesa');
+  renderPrevisaoColumn('receita', 'previsaoListReceita', 'previsaoTotalReceita');
+}
+function renderPrevisaoColumn(type, listId, totalId){
+  const isDespesa = type==='despesa';
   const cats = (isDespesa ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento');
-  const list = document.getElementById('previsaoList');
-  document.getElementById('previsaoListTitle').textContent = isDespesa ? 'orçamento por categoria' : 'receitas previstas por categoria';
-  const addCatBtn = document.getElementById('previsaoAddCatBtn');
-  if(addCatBtn){ addCatBtn.dataset.t = previsaoType; addCatBtn.textContent = `+ nova categoria de ${isDespesa?'despesa':'receita'}`; }
+  const search = (document.getElementById('previsaoBusca').value||'').trim().toLowerCase();
+  const list = document.getElementById(listId);
   list.innerHTML = cats.map((cat, idx)=>{
-    const items = state.budgetItems.filter(b=>b.month===previsaoMonth && b.category===cat && (b.type||'despesa')===previsaoType);
+    let items = state.budgetItems.filter(b=>b.month===previsaoMonth && b.category===cat && (b.type||'despesa')===type);
+    if(search) items = items.filter(b=> b.desc.toLowerCase().includes(search));
     const total = items.reduce((s,b)=>s+b.amount,0);
+    const matchesSearch = !search || cat.toLowerCase().includes(search) || items.length>0;
+    if(search && !matchesSearch) return '';
     const itemsHtml = items.length
       ? items.map(b=>`<div class="prev-item-row">
           <span class="prev-item-desc">${escapeHtml(b.desc)}${b.variable?' <span class="variable-tag">orçamento do mês</span>':''}${b.seriesTotal>1?` <span class="muted-tag">(${b.seriesIndex}/${b.seriesTotal})</span>`:''}${b.paid?' <span class="muted-tag" style="color:#1F8C4C;font-weight:700;">✓ pago</span>':''}</span>
           <span class="prev-item-amt">${fmtBRL(b.amount)}</span>
-          <button type="button" class="icon-btn" onclick="openBudgetItemModal(null, ${b.id})" aria-label="editar previsão">
+          <button type="button" class="icon-btn" onclick="openBudgetItemModal(null, '${b.id}')" aria-label="editar previsão">
             <svg viewBox="0 0 24 24" fill="none"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
           </button>
-          <button type="button" class="icon-btn danger" onclick="deleteBudgetItem(${b.id})" aria-label="excluir previsão">
+          <button type="button" class="icon-btn danger" onclick="deleteBudgetItem('${b.id}')" aria-label="excluir previsão">
             <svg viewBox="0 0 24 24" fill="none"><path d="M5 7h14M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-7 0 1 13a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
           </button>
         </div>`).join('')
-      : `<div class="prev-empty">nenhuma ${isDespesa?'despesa':'receita'} prevista nesta categoria ainda</div>`;
-    return `<div class="prev-cat" id="prevCat-${idx}">
-      <div class="prev-cat-header" onclick="togglePrevCat(${idx})">
+      : `<div class="prev-empty">nenhuma ${isDespesa?'despesa':'receita'} prevista nesta categoria${search?' pra essa busca':' ainda'}</div>`;
+    return `<div class="prev-cat${search && items.length ? ' open':''}" id="prevCat-${type}-${idx}">
+      <div class="prev-cat-header" onclick="togglePrevCat('${type}', ${idx})">
         <span class="cat-dot" style="background:${colorFor(cat)}"></span>
         <span class="cname" style="flex:1;">${cat}</span>
         <span class="prev-cat-total">${fmtBRL(total)}</span>
-        <button type="button" class="icon-btn" onclick="event.stopPropagation(); openBudgetItemModal('${escapeAttr(cat)}')" aria-label="adicionar previsão">
+        <button type="button" class="icon-btn" onclick="event.stopPropagation(); openBudgetItemModal('${escapeAttr(cat)}', null, '${type}')" aria-label="adicionar previsão">
           <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
         </button>
-        <button type="button" class="icon-btn" onclick="event.stopPropagation(); renameCategory('${previsaoType}','${escapeAttr(cat)}')" aria-label="renomear categoria">
+        <button type="button" class="icon-btn" onclick="event.stopPropagation(); renameCategory('${type}','${escapeAttr(cat)}')" aria-label="renomear categoria">
           <svg viewBox="0 0 24 24" fill="none"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
         </button>
-        <button type="button" class="icon-btn danger" onclick="event.stopPropagation(); deleteCategory('${previsaoType}','${escapeAttr(cat)}')" aria-label="excluir categoria">
+        <button type="button" class="icon-btn danger" onclick="event.stopPropagation(); deleteCategory('${type}','${escapeAttr(cat)}')" aria-label="excluir categoria">
           <svg viewBox="0 0 24 24" fill="none"><path d="M5 7h14M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-7 0 1 13a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         </button>
         <svg class="prev-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -852,28 +1222,17 @@ function renderPrevisao(){
       <div class="prev-cat-items">${itemsHtml}</div>
     </div>`;
   }).join('');
-  updatePrevisaoTotal();
-  renderFecharMesResumo();
+  document.getElementById(totalId).textContent = fmtBRL(computeBudgetTotal(previsaoMonth, type));
 }
-document.querySelectorAll('#previsaoTypeToggle button').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    previsaoType = btn.dataset.pt;
-    document.querySelectorAll('#previsaoTypeToggle button').forEach(b=>b.classList.toggle('active', b===btn));
-    renderPrevisao();
-  });
-});
-function updatePrevisaoTotal(){
-  document.getElementById('previsaoTotal').textContent = fmtBRL(computeBudgetTotal(previsaoMonth, previsaoType));
-}
-window.togglePrevCat = function(idx){
-  const wrap = document.getElementById('prevCat-'+idx);
+window.togglePrevCat = function(type, idx){
+  const wrap = document.getElementById('prevCat-'+type+'-'+idx);
   if(wrap) wrap.classList.toggle('open');
 };
 
 /* --- nova despesa prevista modal --- */
 const budgetOverlay = document.getElementById('budgetModalOverlay');
 let editingBudgetItemId = null;
-function openBudgetItemModal(presetCategory, editId){
+function openBudgetItemModal(presetCategory, editId, presetType){
   editingBudgetItemId = editId || null;
   const sel = document.getElementById('bCategory');
 
@@ -886,6 +1245,7 @@ function openBudgetItemModal(presetCategory, editId){
     const item = state.budgetItems.find(b=>b.id===editingBudgetItemId);
     if(item){
       const itemType = item.type || 'despesa';
+      budgetModalType = itemType;
       sel.innerHTML = (itemType==='despesa' ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento').map(c=>`<option value="${c}">${c}</option>`).join('');
       if(titleEl) titleEl.textContent = `editar ${itemType==='despesa'?'despesa':'receita'} prevista`;
       sel.value = item.category;
@@ -899,8 +1259,9 @@ function openBudgetItemModal(presetCategory, editId){
       dateField.style.display = item.variable ? 'none' : '';
     }
   } else {
-    sel.innerHTML = (previsaoType==='despesa' ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento').map(c=>`<option value="${c}">${c}</option>`).join('');
-    if(titleEl) titleEl.textContent = `nova ${previsaoType==='despesa'?'despesa':'receita'} prevista`;
+    budgetModalType = presetType || 'despesa';
+    sel.innerHTML = (budgetModalType==='despesa' ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento').map(c=>`<option value="${c}">${c}</option>`).join('');
+    if(titleEl) titleEl.textContent = `nova ${budgetModalType==='despesa'?'despesa':'receita'} prevista`;
     if(presetCategory) sel.value = presetCategory;
     const defaultDay = (previsaoMonth===todayISO().slice(0,7)) ? todayISO() : previsaoMonth+'-01';
     document.getElementById('bDate').value = defaultDay;
@@ -984,13 +1345,13 @@ document.getElementById('budgetSaveBtn').addEventListener('click', async (e)=>{
       const nid = crypto.randomUUID();
       const itemDate = i===0 ? date : addMonths(date, i);
       const ym = itemDate.slice(0,7);
-      state.budgetItems.push({ id: nid, category, desc, amount, date: itemDate, month: ym, type: previsaoType, variable: isVariable, seriesId, seriesIndex: i+1, seriesTotal: times });
+      state.budgetItems.push({ id: nid, category, desc, amount, date: itemDate, month: ym, type: budgetModalType, variable: isVariable, seriesId, seriesIndex: i+1, seriesTotal: times });
     }
     await persistBudgetItems();
     closeBudgetModal();
     renderPrevisao();
     if(previsaoMonth===currentMonth) renderDashboard();
-    const typeLabel = previsaoType==='receita' ? 'receita' : 'despesa';
+    const typeLabel = budgetModalType==='receita' ? 'receita' : 'despesa';
     showToast(times>1 ? `tintin! ${typeLabel} prevista para ${times} meses` : `tintin! ${typeLabel} prevista adicionada`, true);
   }catch(err){
     showToast('erro ao salvar: '+(err && err.message ? err.message : 'tente novamente'));
@@ -1029,105 +1390,32 @@ window.deleteBudgetItem = async function(id){
   showToast(choice==='extra' ? `todas as ${seriesItems.length} ocorrências removidas` : `${label} prevista removida`, true);
 };
 
-function renderFecharMesResumo(){
-  const closingMonth = todayISO().slice(0,7);
-  const nextMonth = shiftMonth(closingMonth,1);
-  const receitasDoMes = computeReceitasReaisDoMes(closingMonth);
-  const overrun = computeOverrunDoMes(closingMonth);
-  const receitaLiquida = receitasDoMes - overrun;
-  const previstoProximo = computeBudgetTotal(nextMonth, 'despesa');
-  const sobra = receitaLiquida - previstoProximo;
-  const jaFechado = state.closedMonths.includes(closingMonth);
-  const el = document.getElementById('fecharMesResumo');
-  const btn = document.getElementById('btnFecharMes');
-  if(previstoProximo<=0){
-    el.innerHTML = `Cadastre a previsão de <strong>${monthLabelOf(nextMonth)}</strong> antes de fechar ${monthLabelOf(closingMonth)}.`;
-    btn.textContent = 'preencha a previsão do próximo mês primeiro';
-    btn.disabled = true;
-    btn.style.opacity = '0.5';
-    return;
-  }
-  btn.disabled = false;
-  btn.style.opacity = '1';
-  const overrunLine = overrun>0
-    ? `<br><span style="color:var(--orange-2);">estourou o pote de gasto em ${fmtBRL(overrun)} — descontado da receita antes da conta.</span>`
-    : '';
-  el.innerHTML = `Fechando <strong>${monthLabelOf(closingMonth)}</strong>: recebido ${fmtBRL(receitasDoMes)}${overrun>0?` − estouro ${fmtBRL(overrun)}`:''} − previsão de ${monthLabelOf(nextMonth)} ${fmtBRL(previstoProximo)} = <strong>${sobra>=0?'aporte':'resgate'} de ${fmtBRL(Math.abs(sobra))}</strong> em investimento.`
-    + overrunLine
-    + (jaFechado ? `<br><span style="color:var(--orange-2);">este mês já foi fechado antes — fechar de novo cria um lançamento duplicado.</span>` : '');
-  btn.textContent = jaFechado ? 'fechar mês novamente (cuidado, duplica)' : `fechar ${monthLabelOf(closingMonth)} e investir a sobra`;
-}
-
-document.getElementById('btnFecharMes').addEventListener('click', async ()=>{
-  const closingMonth = todayISO().slice(0,7);
-  const nextMonth = shiftMonth(closingMonth,1);
-  const receitasDoMes = computeReceitasReaisDoMes(closingMonth);
-  const overrun = computeOverrunDoMes(closingMonth);
-  const receitaLiquida = receitasDoMes - overrun;
-  const previstoProximo = computeBudgetTotal(nextMonth, 'despesa');
-  const sobra = receitaLiquida - previstoProximo;
-
-  const ok = await showDialog({
-    title:'fechar mês',
-    message:`Fechando ${monthLabelOf(closingMonth)}: recebido ${fmtBRL(receitasDoMes)}${overrun>0?` − estouro do pote ${fmtBRL(overrun)}`:''} − previsão de ${monthLabelOf(nextMonth)} ${fmtBRL(previstoProximo)} = ${sobra>=0?'aporte':'resgate'} de ${fmtBRL(Math.abs(sobra))}. Confirmar?`,
-    okLabel:'fechar mês'
-  });
-  if(!ok) return;
-  pushUndo();
-  const nextId = crypto.randomUUID();
-  state.transactions.push({
-    id: nextId,
-    date: lastDayOfMonth(closingMonth),
-    desc: `Fechamento de ${monthLabelOf(closingMonth)}`,
-    category: 'Investimento',
-    type: sobra>=0 ? 'despesa' : 'receita',
-    amount: Math.abs(sobra),
-    tags: ['fechamento']
-  });
-  if(!state.closedMonths.includes(closingMonth)) state.closedMonths.push(closingMonth);
-  await persistTx();
-  try{ await dbCloseMonth(closingMonth, sobra, overrun); }catch(err){ showToast('erro ao registrar fechamento: '+(err.message||'')); }
-  await persistClosedMonths();
-  currentMonth = nextMonth;
-  saldosMonth = nextMonth;
-  renderDashboard();
-  renderRealizado();
-  renderSaldos();
-  renderFecharMesResumo();
-  showToast('tintin! mês fechado e sobra investida', true);
-});
-
 /* ---------------- Realizado ---------------- */
 function computeCategoryBudgetTotal(ym, category, type='despesa'){
   return state.budgetItems.filter(b=>b.month===ym && b.category===category && (b.type||'despesa')===type).reduce((s,b)=>s+b.amount,0);
 }
 document.getElementById('realizadoPrevMonth').addEventListener('click', ()=>{ realizadoMonth = shiftMonth(realizadoMonth,-1); clearSelection(); renderRealizado(); });
 document.getElementById('realizadoNextMonth').addEventListener('click', ()=>{ realizadoMonth = shiftMonth(realizadoMonth,1); clearSelection(); renderRealizado(); });
-document.querySelectorAll('#realizadoTypeToggle button').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    realizadoType = btn.dataset.rt;
-    document.querySelectorAll('#realizadoTypeToggle button').forEach(b=>b.classList.toggle('active', b===btn));
-    clearSelection();
-    renderRealizado();
-  });
-});
 document.getElementById('realizadoBusca').addEventListener('input', renderRealizado);
 
 function renderRealizado(){
   document.getElementById('realizadoMonthLabel').textContent = monthLabelOf(realizadoMonth);
-  const isDespesa = realizadoType==='despesa';
+  renderRealizadoColumn('despesa', 'realizadoListDespesa', 'realizadoTotalDespesa');
+  renderRealizadoColumn('receita', 'realizadoListReceita', 'realizadoTotalReceita');
+}
+function renderRealizadoColumn(type, listId, totalId){
+  const isDespesa = type==='despesa';
   const cats = (isDespesa ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento');
   const search = (document.getElementById('realizadoBusca').value||'').trim().toLowerCase();
-  document.getElementById('realizadoListTitle').textContent = isDespesa ? 'despesas realizadas por categoria' : 'receitas realizadas por categoria';
   const monthTotal = (isDespesa ? computeSaidasReaisDoMes(realizadoMonth) : computeReceitasReaisDoMes(realizadoMonth));
-  document.getElementById('realizadoTotal').textContent = fmtBRL(monthTotal);
-  const list = document.getElementById('realizadoList');
+  document.getElementById(totalId).textContent = fmtBRL(monthTotal);
+  const list = document.getElementById(listId);
   list.innerHTML = cats.map((cat, idx)=>{
-    let items = state.transactions.filter(t=>t.date.slice(0,7)===realizadoMonth && t.category===cat && t.type===realizadoType);
+    let items = state.transactions.filter(t=>t.date.slice(0,7)===realizadoMonth && t.category===cat && t.type===type);
     items.sort((a,b)=> a.date.localeCompare(b.date) || a.id-b.id);
     if(search) items = items.filter(t=> t.desc.toLowerCase().includes(search));
     const total = items.reduce((s,t)=>s+t.amount,0);
-    const previsto = computeCategoryBudgetTotal(realizadoMonth, cat, realizadoType);
+    const previsto = computeCategoryBudgetTotal(realizadoMonth, cat, type);
     const pctInfo = previsto>0
       ? `<div class="muted-tag" style="font-weight:500;margin-top:2px;">previsto: ${fmtBRL(previsto)} (${Math.round(total/previsto*100)}%)</div>`
       : '';
@@ -1139,29 +1427,29 @@ function renderRealizado(){
           <span style="width:50px;color:var(--muted);font-size:12px;flex-shrink:0;">${fmtDate(t.date).slice(0,5)}</span>
           <span class="prev-item-desc">${escapeHtml(t.desc)}${(t.tags&&t.tags.length)?` <span class="muted-tag">${t.tags.map(tag=>'#'+escapeHtml(tag)).join(' ')}</span>`:''}</span>
           <span class="prev-item-amt">${fmtBRL(t.amount)}</span>
-          <button type="button" class="icon-btn" onclick="openEdit(${t.id})" aria-label="editar">
+          <button type="button" class="icon-btn" onclick="openEdit('${t.id}')" aria-label="editar">
             <svg viewBox="0 0 24 24" fill="none"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
           </button>
-          <button type="button" class="icon-btn danger" onclick="deleteTx(${t.id})" aria-label="excluir">
+          <button type="button" class="icon-btn danger" onclick="deleteTx('${t.id}')" aria-label="excluir">
             <svg viewBox="0 0 24 24" fill="none"><path d="M5 7h14M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-7 0 1 13a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
           </button>
         </div>`).join('')
       : `<div class="prev-empty">nenhum lançamento nesta categoria${search?' pra essa busca':' ainda'}</div>`;
-    return `<div class="prev-cat${search && items.length ? ' open':''}" id="realizadoCat-${idx}">
-      <div class="prev-cat-header" onclick="toggleRealizadoCat(${idx})">
+    return `<div class="prev-cat${search && items.length ? ' open':''}" id="realizadoCat-${type}-${idx}">
+      <div class="prev-cat-header" onclick="toggleRealizadoCat('${type}', ${idx})">
         <span class="cat-dot" style="background:${colorFor(cat)}"></span>
         <div style="flex:1;min-width:0;">
           <span class="cname">${cat}</span>
           ${pctInfo}
         </div>
         <span class="prev-cat-total">${fmtBRL(total)}</span>
-        <button type="button" class="icon-btn" onclick="event.stopPropagation(); openNewForCategory('${escapeAttr(cat)}','${realizadoType}')" aria-label="novo lançamento">
+        <button type="button" class="icon-btn" onclick="event.stopPropagation(); openNewForCategory('${escapeAttr(cat)}','${type}')" aria-label="novo lançamento">
           <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
         </button>
-        <button type="button" class="icon-btn" onclick="event.stopPropagation(); renameCategory('${realizadoType}','${escapeAttr(cat)}')" aria-label="renomear categoria">
+        <button type="button" class="icon-btn" onclick="event.stopPropagation(); renameCategory('${type}','${escapeAttr(cat)}')" aria-label="renomear categoria">
           <svg viewBox="0 0 24 24" fill="none"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
         </button>
-        <button type="button" class="icon-btn danger" onclick="event.stopPropagation(); deleteCategory('${realizadoType}','${escapeAttr(cat)}')" aria-label="excluir categoria">
+        <button type="button" class="icon-btn danger" onclick="event.stopPropagation(); deleteCategory('${type}','${escapeAttr(cat)}')" aria-label="excluir categoria">
           <svg viewBox="0 0 24 24" fill="none"><path d="M5 7h14M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-7 0 1 13a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         </button>
         <svg class="prev-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1170,8 +1458,8 @@ function renderRealizado(){
     </div>`;
   }).join('');
 }
-window.toggleRealizadoCat = function(idx){
-  const wrap = document.getElementById('realizadoCat-'+idx);
+window.toggleRealizadoCat = function(type, idx){
+  const wrap = document.getElementById('realizadoCat-'+type+'-'+idx);
   if(wrap) wrap.classList.toggle('open');
 };
 window.openNewForCategory = function(category, type){
@@ -1190,13 +1478,30 @@ window.openNewForCategory = function(category, type){
 };
 
 /* ---------------- Bulk move category (Realizado) ---------------- */
-document.getElementById('realizadoList').addEventListener('change', (e)=>{
+document.getElementById('realizadoCols').addEventListener('change', (e)=>{
   if(!e.target.classList.contains('tx-select-checkbox')) return;
-  const id = parseInt(e.target.dataset.id, 10);
-  if(e.target.checked) selectedTxIds.add(id);
-  else selectedTxIds.delete(id);
+  const id = e.target.dataset.id;
+  if(e.target.checked){
+    // seleção em massa só faz sentido dentro de um mesmo tipo (despesa/receita),
+    // já que as duas colunas ficam visíveis ao mesmo tempo agora
+    const tx = state.transactions.find(t=>t.id===id);
+    const currentType = selectedTypeOfSelection();
+    if(tx && currentType && tx.type!==currentType){
+      selectedTxIds.clear();
+      renderRealizado();
+    }
+    selectedTxIds.add(id);
+  } else {
+    selectedTxIds.delete(id);
+  }
   updateBulkMoveBar();
 });
+function selectedTypeOfSelection(){
+  if(selectedTxIds.size===0) return null;
+  const firstId = selectedTxIds.values().next().value;
+  const tx = state.transactions.find(t=>t.id===firstId);
+  return tx ? tx.type : null;
+}
 function updateBulkMoveBar(){
   const bar = document.getElementById('bulkMoveBar');
   const count = selectedTxIds.size;
@@ -1204,7 +1509,8 @@ function updateBulkMoveBar(){
   bar.classList.add('show');
   document.getElementById('bulkMoveCount').textContent = `${count} selecionado${count>1?'s':''}`;
   const sel = document.getElementById('bulkMoveCategory');
-  const cats = (realizadoType==='despesa' ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento');
+  const selectionType = selectedTypeOfSelection() || 'despesa';
+  const cats = (selectionType==='despesa' ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento');
   const prevValue = sel.value;
   sel.innerHTML = cats.map(c=>`<option value="${c}">${c}</option>`).join('');
   if(cats.includes(prevValue)) sel.value = prevValue;
@@ -1524,8 +1830,22 @@ async function initApp(){
   renderPrevisao();
   checkDailyReminder();
 }
-// o app só carrega dados depois que auth.js confirma que o usuário está logado
-document.addEventListener('tintin:authenticated', initApp);
+// o app só carrega dados depois que auth.js confirma que o usuário está logado.
+// antes disso, checa se a conta ainda precisa passar pelo onboarding — se a
+// checagem falhar por qualquer motivo, nunca trava o usuário: segue pro painel.
+document.addEventListener('tintin:authenticated', async (e)=>{
+  let onboardingDone = true;
+  try{
+    onboardingDone = await dbGetOnboardingStatus();
+  }catch(err){
+    onboardingDone = true;
+  }
+  if(onboardingDone){
+    initApp();
+  } else {
+    startOnboarding(e.detail.user, initApp);
+  }
+});
 
 function checkDailyReminder(){
   const today = todayISO();
