@@ -211,6 +211,7 @@ async function persistAll(){
 /* ---------------- Toast ---------------- */
 let toastTimer = null;
 let lastSnapshot = null; // one-level undo: full state snapshot taken right before the last mutating action
+let lastUndoFn = null; // ação de reversão específica (usada quando a mudança já commitou direto no banco fora do sistema de diff — ex: categorias, saldo inicial)
 function snapshotState(){
   return JSON.parse(JSON.stringify({
     transactions: state.transactions,
@@ -221,27 +222,40 @@ function snapshotState(){
     saldoInicialOverrides: state.saldoInicialOverrides
   }));
 }
-function pushUndo(){
+// pushUndo(): pra ações "diff-based" (transações, itens de previsão) — restaurar o
+// snapshot local basta, porque persistTx()/persistBudgetItems() sincronizam a
+// diferença certinho com o Supabase depois.
+// pushUndo(async () => {...}): pra ações que já gravam direto no banco no momento em
+// que acontecem (criar/renomear/excluir categoria, editar/resetar saldo inicial) —
+// a função passada é a operação inversa de verdade (ex: dbDeleteCategory pra
+// desfazer um dbCreateCategory), chamada no lugar de só restaurar o snapshot.
+function pushUndo(customUndo){
   lastSnapshot = snapshotState();
+  lastUndoFn = customUndo || null;
 }
 async function undoLastAction(){
   if(!lastSnapshot) return;
-  // NOTA: desfazer transações e itens de previsão funciona corretamente
-  // (persistTx/persistBudgetItems fazem diff contra o Supabase e revertem
-  // certinho). Desfazer criar/renomear/excluir CATEGORIA ainda não reverte
-  // no banco — essas ações já commitam direto via dbCreateCategory/
-  // dbRenameCategory/dbDeleteCategory no momento em que acontecem. Se for
-  // um problema real no uso, dá pra resolver guardando a operação inversa
-  // específica de categoria no lugar de restaurar snapshot.
-  const snap = lastSnapshot;
-  state.transactions = snap.transactions;
-  state.categories = snap.categories;
-  state.budgetItems = snap.budgetItems;
-  state.investedBase = snap.investedBase;
-  state.closedMonths = snap.closedMonths;
-  state.saldoInicialOverrides = snap.saldoInicialOverrides;
-  lastSnapshot = null;
-  await persistAll();
+  const customUndo = lastUndoFn;
+  if(customUndo){
+    lastSnapshot = null;
+    lastUndoFn = null;
+    try{
+      await customUndo();
+    }catch(err){
+      showToast('erro ao desfazer: '+(err && err.message ? err.message : 'tente novamente'));
+      return;
+    }
+  } else {
+    const snap = lastSnapshot;
+    state.transactions = snap.transactions;
+    state.categories = snap.categories;
+    state.budgetItems = snap.budgetItems;
+    state.investedBase = snap.investedBase;
+    state.closedMonths = snap.closedMonths;
+    state.saldoInicialOverrides = snap.saldoInicialOverrides;
+    lastSnapshot = null;
+    await persistAll();
+  }
   renderDashboard();
   renderRealizado();
   renderCategorias();
@@ -251,7 +265,64 @@ async function undoLastAction(){
   document.getElementById('toast').classList.remove('show');
   showToast('tintin! ação desfeita');
 }
+let successAudioCtx = null;
+function playSuccessSound(){
+  try{
+    if(!successAudioCtx) successAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if(successAudioCtx.state === 'suspended') successAudioCtx.resume();
+    const ctx = successAudioCtx;
+    const now = ctx.currentTime;
+    const master = ctx.createGain();
+    master.gain.value = 0.4;
+    master.connect(ctx.destination);
+
+    // "cha": clique mecânico curto (alavanca da caixa registradora) — ruído gerado
+    // na hora (sem arquivo), filtrado pra soar seco e percussivo
+    const clickDur = 0.035;
+    const bufferSize = Math.max(1, Math.floor(ctx.sampleRate*clickDur));
+    const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    for(let i=0;i<bufferSize;i++){ data[i] = (Math.random()*2-1) * (1-i/bufferSize); }
+    const noiseSrc = ctx.createBufferSource();
+    noiseSrc.buffer = noiseBuffer;
+    const noiseFilter = ctx.createBiquadFilter();
+    noiseFilter.type = 'highpass';
+    noiseFilter.frequency.value = 2500;
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.5, now);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, now+clickDur);
+    noiseSrc.connect(noiseFilter);
+    noiseFilter.connect(noiseGain);
+    noiseGain.connect(master);
+    noiseSrc.start(now);
+    noiseSrc.stop(now+clickDur);
+
+    // "ching": sininhos metálicos — fundamental + harmônico levemente dissonante,
+    // como um sino de verdade (em vez de um bip puro), num "tim-tim" ascendente
+    function bell(freq, start, dur, vol){
+      [1, 2.4].forEach((mult, i)=>{
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq*mult;
+        const peak = i===0 ? vol : vol*0.35;
+        gain.gain.setValueAtTime(0.0001, now+start);
+        gain.gain.exponentialRampToValueAtTime(peak, now+start+0.008);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now+start+dur);
+        osc.connect(gain);
+        gain.connect(master);
+        osc.start(now+start);
+        osc.stop(now+start+dur+0.02);
+      });
+    }
+    bell(1567.98, 0.04, 0.16, 0.5); // G6
+    bell(2093.00, 0.14, 0.22, 0.5); // C7 — o "ching" final, mais agudo
+  }catch(err){
+    // som é só um bônus — nunca deixa isso impedir o toast de aparecer
+  }
+}
 function showToast(msg, withUndo){
+  if(!/^erro/i.test((msg||'').trim())) playSuccessSound();
   const t = document.getElementById('toast');
   document.getElementById('toastMsg').textContent = msg;
   const undoBtn = document.getElementById('toastUndo');
@@ -1057,7 +1128,18 @@ document.getElementById('saldosTableBody').addEventListener('change', async (e)=
     renderSaldos();
     return;
   }
-  pushUndo();
+  const hadOverride = Object.prototype.hasOwnProperty.call(state.saldoInicialOverrides, month);
+  const oldVal = state.saldoInicialOverrides[month];
+  pushUndo(async ()=>{
+    if(hadOverride){
+      state.saldoInicialOverrides[month] = oldVal;
+      try{ await dbSetSaldoInicialOverride(month, oldVal); }catch(err){}
+    } else {
+      delete state.saldoInicialOverrides[month];
+      try{ await dbDeleteSaldoInicialOverride(month); }catch(err){}
+    }
+    await persistSaldoInicialOverrides();
+  });
   state.saldoInicialOverrides[month] = val;
   try{ await dbSetSaldoInicialOverride(month, val); }catch(err){ showToast('erro ao salvar: '+(err.message||'')); }
   await persistSaldoInicialOverrides();
@@ -1071,7 +1153,12 @@ document.getElementById('saldosTableBody').addEventListener('keydown', (e)=>{
   }
 });
 window.resetSaldoInicial = async function(month){
-  pushUndo();
+  const oldVal = state.saldoInicialOverrides[month];
+  pushUndo(async ()=>{
+    state.saldoInicialOverrides[month] = oldVal;
+    try{ await dbSetSaldoInicialOverride(month, oldVal); }catch(err){}
+    await persistSaldoInicialOverrides();
+  });
   delete state.saldoInicialOverrides[month];
   try{ await dbDeleteSaldoInicialOverride(month); }catch(err){ showToast('erro ao resetar: '+(err.message||'')); }
   await persistSaldoInicialOverrides();
@@ -1600,7 +1687,10 @@ document.querySelectorAll('.add-cat-btn').forEach(btn=>{
     if(state.categories[type].some(c=>c.toLowerCase()===trimmed.toLowerCase())){
       showToast('essa categoria já existe'); return;
     }
-    pushUndo();
+    pushUndo(async ()=>{
+      await dbDeleteCategory(trimmed, type);
+      await persistCats();
+    });
     try{
       await dbCreateCategory(trimmed, type);
       await persistCats();
@@ -1620,7 +1710,14 @@ async function renameCategory(type, oldName){
   if(!novo) return;
   const trimmed = novo.trim();
   if(!trimmed || trimmed===oldName) return;
-  pushUndo();
+  pushUndo(async ()=>{
+    await dbRenameCategory(trimmed, type, oldName);
+    state.transactions.forEach(t=>{ if(t.type===type && t.category===trimmed) t.category = oldName; });
+    state.budgetItems.forEach(b=>{ if(b.category===trimmed && (b.type||'despesa')===type) b.category = oldName; });
+    lastSyncedTransactions.forEach(t=>{ if(t.type===type && t.category===trimmed) t.category = oldName; });
+    lastSyncedBudgetItems.forEach(b=>{ if(b.category===trimmed && (b.type||'despesa')===type) b.category = oldName; });
+    await persistCats();
+  });
   try{
     await dbRenameCategory(oldName, type, trimmed);
     // atualiza os textos em memória pra refletir na hora (o id no banco não mudou)
@@ -1643,7 +1740,22 @@ async function deleteCategory(type, name){
     : `excluir a categoria "${name}"?`;
   const ok = await showDialog({title:'excluir categoria', message: msg, okLabel:'excluir'});
   if(!ok) return;
-  pushUndo();
+  // captura quem pertence a essa categoria ANTES de excluir, pra saber exatamente
+  // o que reverter no desfazer (sem confundir com itens que já eram "Outros")
+  const affectedTxIds = state.transactions.filter(t=>t.type===type && t.category===name).map(t=>t.id);
+  const affectedBudgetIds = state.budgetItems.filter(b=>b.category===name && (b.type||'despesa')===type).map(b=>b.id);
+  pushUndo(async ()=>{
+    await dbCreateCategory(name, type);
+    affectedTxIds.forEach(id=>{ const t = state.transactions.find(x=>x.id===id); if(t) t.category = name; });
+    affectedBudgetIds.forEach(id=>{ const b = state.budgetItems.find(x=>x.id===id); if(b) b.category = name; });
+    // marca o "último sincronizado" como Outros (o que está de fato no banco agora),
+    // pra persistTx/persistBudgetItems detectarem a diferença e regravarem certinho
+    lastSyncedTransactions.forEach(t=>{ if(affectedTxIds.includes(t.id)) t.category = 'Outros'; });
+    lastSyncedBudgetItems.forEach(b=>{ if(affectedBudgetIds.includes(b.id)) b.category = 'Outros'; });
+    await persistCats();
+    await persistTx();
+    await persistBudgetItems();
+  });
   try{
     await dbDeleteCategory(name, type);
     // espelha localmente a reatribuição pra "Outros" que já aconteceu no banco

@@ -630,7 +630,7 @@
   .toast-undo-btn{
     display:none;background:var(--lime);color:var(--dark);border:none;
     padding:5px 12px;border-radius:999px;font-weight:800;font-size:12px;
-    margin-left:4px;white-space:nowrap;
+    margin-left:4px;white-space:nowrap;pointer-events:auto;
   }
   .toast-undo-btn:hover{background:#b3dd28;}
   .toast-undo-btn.show{display:inline-block;}
