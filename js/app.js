@@ -478,19 +478,22 @@ function renderDashboard(){
     }
   }
 
-  // economia do mês: receita líquida (descontando estouro e o Rendimento, que já vai automático pro investido) - previsão do mês seguinte
+  // economia do mês = resultado do mês (receita sem rendimento - estouro - previsão do mês seguinte) + rendimento do mês.
+  // o Rendimento entra aqui como economia de verdade (ele já flui automático pro Valor Investido de qualquer forma,
+  // isso não muda — ver computeValorInvestidoAsOf); só a conta exibida neste card passou a incluí-lo de novo.
   const nextMonth = shiftMonth(currentMonth, 1);
   const previstoProximo = computeBudgetTotal(nextMonth, 'despesa');
   document.getElementById('statPrevistoProximo').textContent = previstoProximo>0 ? fmtBRL(previstoProximo) : 'sem previsão';
   const overrun = computeOverrunDoMes(currentMonth);
   const rendimentoReal = monthTxReal.filter(t=>t.type==='receita' && t.category==='Rendimento').reduce((s,t)=>s+t.amount,0);
   const receitasSemRendimento = receitas - rendimentoReal;
-  const receitaLiquida = receitasSemRendimento - overrun;
-  const economiaReal = receitaLiquida - previstoProximo;
+  const resultadoDoMesReal = receitasSemRendimento - overrun - previstoProximo;
+  const economiaReal = resultadoDoMesReal + rendimentoReal;
   const receitasPrevistasMes = computeBudgetTotal(currentMonth, 'receita');
   const rendimentoPrevisto = state.budgetItems.filter(b=>b.month===currentMonth && (b.type||'despesa')==='receita' && b.category==='Rendimento').reduce((s,b)=>s+b.amount,0);
   const receitasPrevistasSemRendimento = receitasPrevistasMes - rendimentoPrevisto;
-  const economiaPrevista = receitasPrevistasSemRendimento - previstoProximo;
+  const resultadoDoMesPrevisto = receitasPrevistasSemRendimento - previstoProximo;
+  const economiaPrevista = resultadoDoMesPrevisto + rendimentoPrevisto;
   const ecoEl = document.getElementById('statEconomia');
   const ecoSubEl = document.getElementById('statEconomiaSub');
   document.querySelectorAll('#economiaModeToggle button').forEach(b=>b.classList.toggle('active', b.dataset.em===economiaCardMode));
@@ -498,9 +501,9 @@ function renderDashboard(){
     if(receitasPrevistasMes>0 && previstoProximo>0){
       ecoEl.textContent = fmtBRL(economiaPrevista);
       ecoEl.className = 'stat-value ' + (economiaPrevista>=0?'pos':'neg');
-      ecoSubEl.innerHTML = `(Receita, sem rendimento): ${fmtBRL(receitasPrevistasSemRendimento)}`
-        + (rendimentoPrevisto>0 ? `<br>(Rendimento → investido): ${fmtBRL(rendimentoPrevisto)}` : '')
-        + `<br>(Previsão de ${monthLabelOf(nextMonth)}): −${fmtBRL(previstoProximo)}`;
+      ecoSubEl.innerHTML = `(resultado do mês): ${fmtBRL(resultadoDoMesPrevisto)}`
+        + `<br>(rendimento): ${fmtBRL(rendimentoPrevisto)}`
+        + `<br>(total): ${fmtBRL(economiaPrevista)}`;
     } else {
       ecoEl.textContent = 'sem previsão';
       ecoEl.className = 'stat-value';
@@ -509,10 +512,11 @@ function renderDashboard(){
   } else {
     ecoEl.textContent = fmtBRL(economiaReal);
     ecoEl.className = 'stat-value ' + (economiaReal>=0?'pos':'neg');
-    ecoSubEl.innerHTML = `(Receita, sem rendimento): ${fmtBRL(receitasSemRendimento)}`
-      + (rendimentoReal>0 ? `<br>(Rendimento → investido): ${fmtBRL(rendimentoReal)}` : '')
-      + (overrun>0 ? `<br>(Estouro do pote): −${fmtBRL(overrun)}` : '')
-      + (previstoProximo>0 ? `<br>(Previsão de ${monthLabelOf(nextMonth)}): −${fmtBRL(previstoProximo)}` : `<br>cadastre a previsão de ${monthLabelOf(nextMonth)} pra este número fazer sentido`);
+    ecoSubEl.innerHTML = `(resultado do mês): ${fmtBRL(resultadoDoMesReal)}`
+      + (overrun>0 ? ` (já descontado o estouro de ${fmtBRL(overrun)})` : '')
+      + `<br>(rendimento): ${fmtBRL(rendimentoReal)}`
+      + `<br>(total): ${fmtBRL(economiaReal)}`
+      + (previstoProximo<=0 ? `<br>cadastre a previsão de ${monthLabelOf(nextMonth)} pra este número fazer sentido` : '');
   }
 
   const previsaoItems = state.budgetItems.filter(b=>b.month===currentMonth && (b.type||'despesa')==='despesa').map(b=>({category:b.category, amount:b.amount, type:'despesa'}));
