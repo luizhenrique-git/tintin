@@ -1321,18 +1321,35 @@ document.getElementById('budgetSaveBtn').addEventListener('click', async (e)=>{
     }
 
     if(editingBudgetItemId){
-      pushUndo();
       const item = state.budgetItems.find(b=>b.id===editingBudgetItemId);
-      let itemTypeLabel = 'despesa';
-      if(item){
-        itemTypeLabel = item.type==='receita' ? 'receita' : 'despesa';
+      if(!item){ closeBudgetModal(); return; }
+      const itemTypeLabel = item.type==='receita' ? 'receita' : 'despesa';
+      const seriesItems = item.seriesId ? state.budgetItems.filter(b=>b.seriesId===item.seriesId) : [];
+
+      let applyToAll = false;
+      if(seriesItems.length>1){
+        const choice = await showDialog({
+          title: `editar ${itemTypeLabel} prevista`,
+          message: `Você alterou "${desc}" para ${fmtBRL(amount)}. Aplicar só a este mês, ou a todas as ${seriesItems.length} ocorrências dessa série?`,
+          okLabel: 'só este mês',
+          extraLabel: `todas as ${seriesItems.length}`
+        });
+        if(!choice) return;
+        applyToAll = choice==='extra';
+      }
+
+      pushUndo();
+      if(applyToAll){
+        // categoria/descrição/valor propagam pra série toda; cada item mantém sua própria data/mês
+        seriesItems.forEach(b=>{ Object.assign(b, { category, desc, amount }); });
+      } else {
         Object.assign(item, { category, desc, amount, date, month: date.slice(0,7), variable: isVariable });
       }
       await persistBudgetItems();
       closeBudgetModal();
       renderPrevisao();
       if(previsaoMonth===currentMonth) renderDashboard();
-      showToast(`tintin! ${itemTypeLabel} prevista atualizada`, true);
+      showToast(applyToAll ? `tintin! ${itemTypeLabel} prevista atualizada em todas as ${seriesItems.length} ocorrências` : `tintin! ${itemTypeLabel} prevista atualizada`, true);
       return;
     }
 
