@@ -963,11 +963,14 @@ function computeSimulacaoPatrimonio(endMonth){
   const months = [];
   let m = startMonth;
   while(m <= endMonth){
+    // segue o mesmo método do card "economia do mês" do painel: a receita prevista
+    // do mês M financia o teto de gasto do mês SEGUINTE (M+1) — não é M contra ele mesmo.
+    const nextM = shiftMonth(m, 1);
     const receita = computeBudgetTotal(m, 'receita');
-    const despesa = computeBudgetTotal(m, 'despesa');
-    const hasPrevisao = receita>0 || despesa>0;
-    months.push({ month:m, economia: receita-despesa, hasPrevisao });
-    m = shiftMonth(m, 1);
+    const despesaProximo = computeBudgetTotal(nextM, 'despesa');
+    const hasPrevisao = receita>0 || despesaProximo>0;
+    months.push({ month:m, economia: receita-despesaProximo, hasPrevisao });
+    m = nextM;
   }
   const total = months.reduce((acc,mo)=> acc + (mo.hasPrevisao ? mo.economia : 0), startValue);
   const missingCount = months.filter(mo=>!mo.hasPrevisao).length;
