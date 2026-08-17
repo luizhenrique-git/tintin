@@ -1434,8 +1434,9 @@ document.getElementById('budgetSaveBtn').addEventListener('click', async (e)=>{
 
       pushUndo();
       if(applyToAll){
-        // categoria/descrição/valor propagam pra série toda; cada item mantém sua própria data/mês
-        seriesItems.forEach(b=>{ Object.assign(b, { category, desc, amount }); });
+        // categoria/descrição/valor/orçamento-variável propagam pra série toda;
+        // cada item mantém sua própria data/mês original (não sincroniza isso entre eles)
+        seriesItems.forEach(b=>{ Object.assign(b, { category, desc, amount, variable: isVariable }); });
       } else {
         Object.assign(item, { category, desc, amount, date, month: date.slice(0,7), variable: isVariable });
       }
