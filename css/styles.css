@@ -54,7 +54,19 @@
     flex-wrap:wrap;
     justify-content:center;
   }
-  .topbar-spacer{ visibility:hidden; }
+  .topbar-logout{
+    display:flex;align-items:center;gap:6px;justify-self:end;
+    background:transparent;color:var(--cream);opacity:.75;
+    border:1.5px solid rgba(246,238,220,0.25);
+    padding:8px 14px;border-radius:999px;
+    font-size:13px;font-weight:700;white-space:nowrap;
+    transition:all .15s ease;
+  }
+  .topbar-logout svg{width:15px;height:15px;flex-shrink:0;}
+  .topbar-logout:hover{
+    opacity:1;background:rgba(244,98,44,0.15);
+    border-color:var(--orange);color:var(--orange);
+  }
   .brand{
     display:flex;align-items:center;gap:10px;
     font-family:'Baloo 2',sans-serif;
@@ -722,7 +734,7 @@
   @media(max-width:720px){
     .topbar{grid-template-columns:1fr;justify-items:center;gap:12px;}
     .brand{justify-self:center;}
-    .topbar-spacer{display:none;}
+    .topbar-logout{justify-self:center;}
     .topbar-center{width:100%;justify-content:center;}
   }
   @media(max-width:520px){
