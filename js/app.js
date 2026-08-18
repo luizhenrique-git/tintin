@@ -86,6 +86,10 @@ let modalType = 'despesa';
 let pieChart = null, barChart = null, investidoChart = null, investimentosChart = null;
 
 const PALETTE = ['#F4622C','#4B21C4','#1F8C4C','#C9A227','#D45B90','#2E7BBF','#8B5E3C','#3FA796','#B23A48','#6C5CE7','#E08E45','#2F6B4F','#9B5DE5','#D8A048','#5E8C61','#C4497A'];
+function hexToRgb(hex){
+  const h = hex.replace('#','');
+  return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
+}
 function colorFor(name){
   let h = 0;
   for(let i=0;i<name.length;i++){ h = (h*31 + name.charCodeAt(i)) >>> 0; }
@@ -573,112 +577,213 @@ function renderPieReceita(monthTx){
 }
 
 /* ---------------- Relatório PDF ---------------- */
+// mesma fórmula usada no card "economia do mês" do painel (modo realizado),
+// só que parametrizada por mês — reusa computeOverrunDoMes/computeBudgetTotal/
+// txForMonth, não duplica nem reescreve o cálculo em si.
+function computeEconomiaRealDoMes(ym){
+  const monthTx = txForMonth(ym);
+  const monthTxReal = monthTx.filter(t=>t.category!=='Investimento');
+  const receitas = monthTxReal.filter(t=>t.type==='receita').reduce((s,t)=>s+t.amount,0);
+  const despesas = monthTxReal.filter(t=>t.type==='despesa').reduce((s,t)=>s+t.amount,0);
+  const overrun = computeOverrunDoMes(ym);
+  const nextM = shiftMonth(ym, 1);
+  const previstoProximo = computeBudgetTotal(nextM, 'despesa');
+  const rendimento = monthTxReal.filter(t=>t.type==='receita' && t.category==='Rendimento').reduce((s,t)=>s+t.amount,0);
+  const receitasSemRendimento = receitas - rendimento;
+  const resultadoDoMes = receitasSemRendimento - overrun - previstoProximo;
+  const economia = resultadoDoMes + rendimento;
+  return { receitas, despesas, overrun, previstoProximo, rendimento, resultadoDoMes, economia };
+}
+
 async function gerarRelatorioPDF(){
   try{
     if(!window.jspdf){ showToast('erro: biblioteca de PDF não carregou (verifique sua conexão)'); return; }
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({unit:'mm', format:'a4'});
-    let y = 40;
+    const marginX = 14, rightX = 196;
+    let y = 44;
 
-    // header band
+    function ensureSpace(needed){
+      if(y + needed > 283){ doc.addPage(); y = 20; }
+    }
+    // seção "card": título + linhas label/valor com altura fixa conhecida de antemão,
+    // desenha o fundo primeiro e depois o texto por cima (jsPDF não tem z-index).
+    function drawCardSection(title, rows){
+      const rowH = 6.6;
+      const height = 12 + rows.length*rowH + 4;
+      ensureSpace(height + 10);
+      const boxY = y;
+      doc.setFillColor(246,238,220);
+      doc.roundedRect(marginX-4, boxY-6, rightX-marginX+8, height, 3, 3, 'F');
+      doc.setFont('helvetica','bold'); doc.setFontSize(12.5); doc.setTextColor(16,35,26);
+      doc.text(title, marginX, boxY);
+      let ry = boxY + 9;
+      rows.forEach(r=>{
+        doc.setFont('helvetica','normal'); doc.setFontSize(10.5);
+        doc.setTextColor(107,117,104);
+        doc.text(r.label, marginX, ry);
+        doc.setFont('helvetica','bold');
+        const [cr,cg,cb] = r.valueColor || [16,35,26];
+        doc.setTextColor(cr,cg,cb);
+        doc.text(r.value, rightX, ry, {align:'right'});
+        ry += rowH;
+      });
+      y = boxY + height + 8;
+    }
+    function drawStatusPill(text, color){
+      ensureSpace(14);
+      doc.setFont('helvetica','bold'); doc.setFontSize(9.5);
+      const w = doc.getTextWidth(text) + 10;
+      const [r,g,b] = color;
+      doc.setFillColor(r,g,b);
+      doc.roundedRect(marginX, y-5, w, 8, 4, 4, 'F');
+      doc.setTextColor(255,255,255);
+      doc.text(text, marginX+5, y);
+      y += 14;
+    }
+    function drawTag(x, ty, text, color){
+      doc.setFont('helvetica','bold'); doc.setFontSize(7.5);
+      const w = doc.getTextWidth(text) + 4;
+      const [r,g,b] = color;
+      doc.setFillColor(r,g,b);
+      doc.roundedRect(x, ty-3.3, w, 4.3, 1.4, 1.4, 'F');
+      doc.setTextColor(255,255,255);
+      doc.text(text, x+2, ty-0.3);
+      return x + w + 2;
+    }
+    // lista de categorias com bolinha colorida (mesma cor por categoria do resto do
+    // app, via colorFor) e, quando disponível, os itens individuais com tags de
+    // "pago"/"orçamento do mês" — mesmo espírito visual das tags já usadas na tela.
+    function drawCategoryList(title, catGroups, emptyMsg){
+      ensureSpace(16);
+      doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(16,35,26);
+      doc.text(title, marginX, y); y += 6;
+      doc.setDrawColor(230,220,190); doc.line(marginX, y, rightX, y); y += 6;
+      if(catGroups.length===0){
+        doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(150,150,140);
+        doc.text(emptyMsg, marginX, y); y += 8;
+        return;
+      }
+      const grandTotal = catGroups.reduce((s,c)=>s+c.total,0);
+      catGroups.forEach(cat=>{
+        ensureSpace(10);
+        const [r,g,b] = hexToRgb(colorFor(cat.name));
+        doc.setFillColor(r,g,b);
+        doc.circle(marginX+1.2, y-1.6, 1.4, 'F');
+        doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(60,60,55);
+        doc.text(cat.name, marginX+6, y);
+        const pct = grandTotal>0 ? Math.round(cat.total/grandTotal*100) : 0;
+        doc.setTextColor(16,35,26);
+        doc.text(`${fmtBRL(cat.total)}  (${pct}%)`, rightX, y, {align:'right'});
+        y += 6;
+        doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
+        cat.items.forEach(it=>{
+          ensureSpace(7);
+          doc.setTextColor(120,120,112);
+          const label = `${it.desc}`;
+          doc.text(label, marginX+6, y);
+          let tagX = marginX + 6 + doc.getTextWidth(label) + 3;
+          if(it.paid) tagX = drawTag(tagX, y, 'pago', [31,140,76]);
+          if(it.variable) tagX = drawTag(tagX, y, 'orçamento do mês', [244,98,44]);
+          doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(90,90,85);
+          doc.text(fmtBRL(it.amount), rightX, y, {align:'right'});
+          y += 5.4;
+        });
+        y += 2.5;
+      });
+      y += 4;
+    }
+    function buildCatGroups(items){
+      const map = {};
+      items.forEach(it=>{
+        if(!map[it.category]) map[it.category] = { name: it.category, total:0, items:[] };
+        map[it.category].total += it.amount;
+        map[it.category].items.push({ desc: it.desc, amount: it.amount, paid: !!it.paid, variable: !!it.variable });
+      });
+      const groups = Object.values(map).sort((a,b)=>b.total-a.total);
+      groups.forEach(g=> g.items.sort((a,b)=>b.amount-a.amount));
+      return groups;
+    }
+
+    // ---- cabeçalho ----
     doc.setFillColor(16,35,26);
-    doc.rect(0,0,210,28,'F');
+    doc.rect(0,0,210,30,'F');
+    doc.setFillColor(198,241,53);
+    doc.roundedRect(marginX,7,11,11,3,3,'F');
+    doc.setTextColor(16,35,26); doc.setFont('helvetica','bold'); doc.setFontSize(11);
+    doc.text('t', marginX+4.4, 15.5);
     doc.setTextColor(198,241,53);
-    doc.setFont('helvetica','bold'); doc.setFontSize(18);
-    doc.text('tintin.', 14, 18);
+    doc.setFont('helvetica','bold'); doc.setFontSize(19);
+    doc.text('tintin.', marginX+15, 16);
     doc.setTextColor(246,238,220);
     doc.setFont('helvetica','normal'); doc.setFontSize(11);
-    doc.text(`relatório mensal — ${monthLabelOf(currentMonth)}`, 14, 24);
+    doc.text(`relatório mensal — ${monthLabelOf(currentMonth)}`, marginX+15, 23);
 
-    const monthTx = txForMonth(currentMonth);
-    const monthTxReal = monthTx.filter(t=>t.category!=='Investimento');
-    const receitas = monthTxReal.filter(t=>t.type==='receita').reduce((s,t)=>s+t.amount,0);
-    const despesas = monthTxReal.filter(t=>t.type==='despesa').reduce((s,t)=>s+t.amount,0);
+    // ---- dados ----
+    const eco = computeEconomiaRealDoMes(currentMonth);
     const previstoMes = computeSaldoInicialDoMes(currentMonth);
     const valorInvestido = computeValorInvestido();
-    const overrun = computeOverrunDoMes(currentMonth);
-    const nextMonth = shiftMonth(currentMonth,1);
-    const previstoProximo = computeBudgetTotal(nextMonth, 'despesa');
-    const receitaLiquida = receitas - overrun;
-    const economia = receitaLiquida - previstoProximo;
+    const { aporte, rendimento: rendimentoTotal } = computeInvestBreakdown();
+    const prevMonth = shiftMonth(currentMonth, -1);
+    const ecoPrev = computeEconomiaRealDoMes(prevMonth);
 
-    doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(16,35,26);
-    doc.text('resumo geral', 14, y); y+=6;
-    doc.setDrawColor(230,220,190); doc.line(14,y,196,y); y+=6;
+    // ---- resumo geral ----
+    const ecoColor = eco.economia>=0 ? [31,140,76] : [217,73,26];
+    drawCardSection('resumo geral', [
+      { label:'valor investido (total)', value: fmtBRL(valorInvestido) },
+      { label:'receita do mês', value: fmtBRL(eco.receitas) },
+      { label:'saldo inicial (previsto)', value: previstoMes>0?fmtBRL(previstoMes):'sem previsão' },
+      { label:'gasto realizado', value: fmtBRL(eco.despesas) + (previstoMes>0?`  (${Math.round(eco.despesas/previstoMes*100)}% do previsto)`:'') },
+      { label:'economia do mês', value: fmtBRL(eco.economia), valueColor: ecoColor },
+      { label:'   resultado do mês', value: fmtBRL(eco.resultadoDoMes) },
+      { label:'   rendimento', value: fmtBRL(eco.rendimento) },
+    ]);
+    if(eco.overrun>0) drawStatusPill(`estourou o saldo inicial em ${fmtBRL(eco.overrun)}`, [217,73,26]);
+    else if(previstoMes>0) drawStatusPill('dentro do previsto', [31,140,76]);
+    else drawStatusPill('sem previsão cadastrada pra este mês', [150,150,140]);
 
-    const rows = [
-      ['valor investido (total)', fmtBRL(valorInvestido)],
-      ['receita do mês', fmtBRL(receitas)],
-      ['saldo inicial (previsto)', previstoMes>0?fmtBRL(previstoMes):'sem previsão'],
-      ['gasto realizado', fmtBRL(despesas) + (previstoMes>0?`  (${Math.round(despesas/previstoMes*100)}% do previsto)`:'')],
-      ['economia do mês', fmtBRL(economia)]
-    ];
-    doc.setFont('helvetica','normal'); doc.setFontSize(11);
-    rows.forEach(([label,val])=>{
-      doc.setTextColor(107,117,104); doc.text(label, 14, y);
-      doc.setTextColor(16,35,26); doc.setFont('helvetica','bold'); doc.text(val, 196, y, {align:'right'});
-      doc.setFont('helvetica','normal');
-      y += 7;
-    });
+    // ---- patrimônio ----
+    drawCardSection('patrimônio', [
+      { label:'valor investido (total)', value: fmtBRL(valorInvestido) },
+      { label:'aporte manual (categoria Investimento)', value: fmtBRL(aporte) },
+      { label:'rendimento automático (categoria Rendimento)', value: fmtBRL(rendimentoTotal) },
+    ]);
 
-    y += 3;
-    doc.setFont('helvetica','bold'); doc.setFontSize(10.5);
-    if(overrun>0){
-      doc.setTextColor(217,73,26);
-      doc.text(`estourou o saldo inicial em ${fmtBRL(overrun)}`, 14, y);
-    } else if(previstoMes>0){
-      doc.setTextColor(31,140,76);
-      doc.text('dentro do previsto', 14, y);
-    } else {
-      doc.setTextColor(150,150,140);
-      doc.text('sem previsão cadastrada pra este mês', 14, y);
+    // ---- comparação com o mês anterior ----
+    function compareRow(label, curr, prev, higherIsBetter){
+      const delta = curr - prev;
+      const improved = higherIsBetter ? delta>=0 : delta<=0;
+      const color = delta===0 ? [150,150,140] : (improved ? [31,140,76] : [217,73,26]);
+      const sign = delta>=0 ? '+' : '-';
+      return { label, value: `${fmtBRL(curr)}  (${sign}${fmtBRL(Math.abs(delta))})`, valueColor: color };
     }
-    y += 12;
+    drawCardSection(`comparação com ${monthLabelOf(prevMonth)}`, [
+      compareRow('receita do mês', eco.receitas, ecoPrev.receitas, true),
+      compareRow('gasto realizado', eco.despesas, ecoPrev.despesas, false),
+      compareRow('economia do mês', eco.economia, ecoPrev.economia, true),
+    ]);
 
-    const previsaoItems = state.budgetItems.filter(b=>b.month===currentMonth && (b.type||'despesa')==='despesa');
-    const despesaSource = previsaoItems.length ? previsaoItems : monthTxReal.filter(t=>t.type==='despesa');
-    const despByCat = {};
-    despesaSource.forEach(t=>{ despByCat[t.category] = (despByCat[t.category]||0)+t.amount; });
-    const despEntries = Object.entries(despByCat).sort((a,b)=>b[1]-a[1]);
-    const despTotal = despEntries.reduce((s,[,v])=>s+v,0);
+    // ---- despesas por categoria (prefere previsão do mês, senão realizado) ----
+    const previsaoItemsDespesa = state.budgetItems.filter(b=>b.month===currentMonth && (b.type||'despesa')==='despesa');
+    const monthTxReal = txForMonth(currentMonth).filter(t=>t.category!=='Investimento');
+    const despesaSource = previsaoItemsDespesa.length ? previsaoItemsDespesa : monthTxReal.filter(t=>t.type==='despesa');
+    drawCategoryList(
+      `despesas por categoria${previsaoItemsDespesa.length?' (previsto)':''}`,
+      buildCatGroups(despesaSource),
+      'nenhuma despesa neste mês'
+    );
 
-    doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(16,35,26);
-    doc.text(`despesas por categoria${previsaoItems.length?' (previsto)':''}`, 14, y); y+=6;
-    doc.setDrawColor(230,220,190); doc.line(14,y,196,y); y+=6;
-    doc.setFont('helvetica','normal'); doc.setFontSize(10.5);
-    if(despEntries.length===0){
-      doc.setTextColor(150,150,140); doc.text('nenhuma despesa neste mês', 14, y); y+=8;
-    }
-    despEntries.forEach(([cat,val])=>{
-      if(y>270){ doc.addPage(); y=20; }
-      doc.setTextColor(60,60,55); doc.text(cat, 14, y);
-      const pct = despTotal>0 ? Math.round(val/despTotal*100) : 0;
-      doc.setTextColor(16,35,26); doc.text(`${fmtBRL(val)}  (${pct}%)`, 196, y, {align:'right'});
-      y += 6.5;
-    });
-    y += 8;
+    // ---- receitas por categoria (mesma preferência previsão/realizado que o painel já usa) ----
+    const previsaoItemsReceita = state.budgetItems.filter(b=>b.month===currentMonth && (b.type||'despesa')==='receita');
+    const receitaSource = previsaoItemsReceita.length ? previsaoItemsReceita : monthTxReal.filter(t=>t.type==='receita');
+    drawCategoryList(
+      `receitas por categoria${previsaoItemsReceita.length?' (previsto)':''}`,
+      buildCatGroups(receitaSource),
+      'nenhuma receita neste mês'
+    );
 
-    const receitaSource = monthTxReal.filter(t=>t.type==='receita');
-    const recByCat = {};
-    receitaSource.forEach(t=>{ recByCat[t.category] = (recByCat[t.category]||0)+t.amount; });
-    const recEntries = Object.entries(recByCat).sort((a,b)=>b[1]-a[1]);
-    if(y>250){ doc.addPage(); y=20; }
-    doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(16,35,26);
-    doc.text('receitas por categoria', 14, y); y+=6;
-    doc.setDrawColor(230,220,190); doc.line(14,y,196,y); y+=6;
-    doc.setFont('helvetica','normal'); doc.setFontSize(10.5);
-    if(recEntries.length===0){
-      doc.setTextColor(150,150,140); doc.text('nenhuma receita neste mês', 14, y); y+=8;
-    }
-    recEntries.forEach(([cat,val])=>{
-      if(y>270){ doc.addPage(); y=20; }
-      doc.setTextColor(60,60,55); doc.text(cat, 14, y);
-      doc.setTextColor(16,35,26); doc.text(fmtBRL(val), 196, y, {align:'right'});
-      y += 6.5;
-    });
-
-    doc.setFontSize(8); doc.setTextColor(160,160,150);
-    doc.text(`gerado em ${new Date().toLocaleString('pt-BR')}`, 14, 290);
+    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(160,160,150);
+    doc.text(`gerado em ${new Date().toLocaleString('pt-BR')}`, marginX, 290);
 
     const pdfBlob = doc.output('blob');
     const pdfUrl = URL.createObjectURL(pdfBlob);
@@ -1434,9 +1539,18 @@ document.getElementById('budgetSaveBtn').addEventListener('click', async (e)=>{
 
       pushUndo();
       if(applyToAll){
-        // categoria/descrição/valor/orçamento-variável propagam pra série toda;
-        // cada item mantém sua própria data/mês original (não sincroniza isso entre eles)
-        seriesItems.forEach(b=>{ Object.assign(b, { category, desc, amount, variable: isVariable }); });
+        // categoria/descrição/valor/orçamento-variável propagam pra série toda.
+        // a data sincroniza só o DIA do mês (ex: dia 1 -> dia 5 em todas) — cada
+        // item continua no seu próprio mês/ano, só ajustando pra itens variáveis
+        // (que não têm um dia fixo, então a data não se aplica a eles).
+        const newDay = isVariable ? null : parseInt(date.slice(8,10), 10);
+        seriesItems.forEach(b=>{
+          Object.assign(b, { category, desc, amount, variable: isVariable });
+          if(!isVariable && newDay){
+            const clampedDay = Math.min(newDay, daysInMonth(b.month));
+            b.date = b.month+'-'+String(clampedDay).padStart(2,'0');
+          }
+        });
       } else {
         Object.assign(item, { category, desc, amount, date, month: date.slice(0,7), variable: isVariable });
       }
