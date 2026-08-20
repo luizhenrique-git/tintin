@@ -467,7 +467,11 @@ function renderDashboard(){
   const receitas = monthTxReal.filter(t=>t.type==='receita').reduce((s,t)=>s+t.amount,0);
   const despesas = monthTxReal.filter(t=>t.type==='despesa').reduce((s,t)=>s+t.amount,0);
 
-  document.getElementById('statInvestido').textContent = fmtBRL(computeValorInvestido());
+  // valor investido "como estava" no mês sendo navegado (hoje, se for o mês atual;
+  // último dia do mês, se for um mês passado) — reusa computeValorInvestidoAsOf(),
+  // a mesma função já usada no gráfico de evolução.
+  const investidoAsOfDate = (currentMonth===todayISO().slice(0,7)) ? todayISO() : lastDayOfMonth(currentMonth);
+  document.getElementById('statInvestido').textContent = fmtBRL(computeValorInvestidoAsOf(investidoAsOfDate));
   const receitasPrevistas = computeBudgetTotal(currentMonth, 'receita');
   const statReceitaEl = document.getElementById('statReceita');
   if(receitaCardMode==='previsto'){
