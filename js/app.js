@@ -1,4 +1,25 @@
 /* ---------------- Helpers ---------------- */
+// evita clique-duplo/toque-duplo disparando a mesma ação duas vezes enquanto ela
+// ainda está em andamento (ex: salvando algo no Supabase) — comum quando a ação
+// demora um pouco e a pessoa clica de novo achando que não registrou o primeiro
+// clique, gerando itens duplicados. Trava o botão até a promessa terminar.
+function guardAsyncClick(btn, handler){
+  btn.addEventListener('click', async (e)=>{
+    if(btn.dataset.busy==='1') return;
+    btn.dataset.busy = '1';
+    // feedback visual imediato: o botão fica visivelmente "travado" enquanto
+    // processa, pra pessoa ver que o clique já registrou e não clicar de novo
+    btn.style.opacity = '0.65';
+    btn.style.pointerEvents = 'none';
+    try{
+      await handler(e);
+    } finally {
+      btn.dataset.busy = '';
+      btn.style.opacity = '';
+      btn.style.pointerEvents = '';
+    }
+  });
+}
 function parseAmount(raw){
   if(raw==null) return NaN;
   let s = String(raw).trim();
@@ -972,7 +993,7 @@ document.getElementById('btnAportar').addEventListener('click', openAportarModal
 document.getElementById('aportarModalClose').addEventListener('click', closeAportarModal);
 document.getElementById('aportarCancel').addEventListener('click', closeAportarModal);
 aportarOverlay.addEventListener('click', (e)=>{ if(e.target===aportarOverlay) closeAportarModal(); });
-document.getElementById('aportarSaveBtn').addEventListener('click', async ()=>{
+guardAsyncClick(document.getElementById('aportarSaveBtn'), async ()=>{
   const monthEl = document.getElementById('aportarMonth');
   const amountEl = document.getElementById('aportarAmount');
   [monthEl, amountEl].forEach(el=>el.classList.remove('invalid'));
@@ -1023,7 +1044,7 @@ document.getElementById('btnRetirar').addEventListener('click', openRetirarModal
 document.getElementById('retirarModalClose').addEventListener('click', closeRetirarModal);
 document.getElementById('retirarCancel').addEventListener('click', closeRetirarModal);
 retirarOverlay.addEventListener('click', (e)=>{ if(e.target===retirarOverlay) closeRetirarModal(); });
-document.getElementById('retirarSaveBtn').addEventListener('click', async ()=>{
+guardAsyncClick(document.getElementById('retirarSaveBtn'), async ()=>{
   const monthEl = document.getElementById('retirarMonth');
   const amountEl = document.getElementById('retirarAmount');
   [monthEl, amountEl].forEach(el=>el.classList.remove('invalid'));
@@ -1505,7 +1526,7 @@ document.getElementById('bRepeatType').addEventListener('change', (e)=>{
     if(e.key==='Enter'){ e.preventDefault(); document.getElementById('budgetSaveBtn').click(); }
   });
 });
-document.getElementById('budgetSaveBtn').addEventListener('click', async (e)=>{
+guardAsyncClick(document.getElementById('budgetSaveBtn'), async (e)=>{
   e.preventDefault();
   try{
     const dateEl = document.getElementById('bDate');
@@ -1761,7 +1782,7 @@ document.getElementById('bulkMoveCancel').addEventListener('click', ()=>{
   clearSelection();
   renderRealizado();
 });
-document.getElementById('bulkMoveBtn').addEventListener('click', async ()=>{
+guardAsyncClick(document.getElementById('bulkMoveBtn'), async ()=>{
   const target = document.getElementById('bulkMoveCategory').value;
   if(!target || selectedTxIds.size===0) return;
   const count = selectedTxIds.size;
@@ -1812,7 +1833,7 @@ function renderCategorias(){
   rEl.innerHTML = build(state.categories.receita, 'receita');
 }
 document.querySelectorAll('.add-cat-btn').forEach(btn=>{
-  btn.addEventListener('click', async ()=>{
+  guardAsyncClick(btn, async ()=>{
     const type = btn.dataset.t;
     const name = await showDialog({title:`nova categoria de ${type}`, message:'digite o nome da categoria:', withInput:true, defaultValue:'', okLabel:'criar'});
     if(!name) return;
@@ -1974,7 +1995,7 @@ window.deleteTx = async function(id){
     if(e.key==='Enter'){ e.preventDefault(); document.getElementById('txSaveBtn').click(); }
   });
 });
-document.getElementById('txSaveBtn').addEventListener('click', async (e)=>{
+guardAsyncClick(document.getElementById('txSaveBtn'), async (e)=>{
   e.preventDefault();
   try{
     const dateEl = document.getElementById('txDate');
@@ -2133,7 +2154,7 @@ async function dismissReminder(){
   document.getElementById('reminderOverlay').classList.remove('open');
 }
 document.getElementById('reminderOk').addEventListener('click', dismissReminder);
-document.getElementById('reminderGoMapa').addEventListener('click', async ()=>{
+guardAsyncClick(document.getElementById('reminderGoMapa'), async ()=>{
   await dismissReminder();
   document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
