@@ -525,16 +525,33 @@
         <button type="button" class="btn-secondary" id="simShortcut6">próximos 6 meses</button>
       </div>
       <div class="sim-divider">ou escolhe um período customizado</div>
-      <div class="month-nav" style="justify-content:center;margin-bottom:16px;">
-        <button type="button" id="simCustomPrev" aria-label="mês anterior">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
-        <div class="month-label" id="simCustomLabel" style="font-size:17px;">—</div>
-        <button type="button" id="simCustomNext" aria-label="próximo mês">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
+      <div class="sim-range">
+        <div class="sim-range-col">
+          <span class="sim-range-label">mês inicial</span>
+          <div class="month-nav" style="justify-content:center;margin-bottom:0;">
+            <button type="button" id="simStartPrev" aria-label="mês anterior">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div class="month-label" id="simStartLabel" style="font-size:14.5px;">—</div>
+            <button type="button" id="simStartNext" aria-label="próximo mês">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="sim-range-col">
+          <span class="sim-range-label">mês final</span>
+          <div class="month-nav" style="justify-content:center;margin-bottom:0;">
+            <button type="button" id="simCustomPrev" aria-label="mês anterior">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div class="month-label" id="simCustomLabel" style="font-size:14.5px;">—</div>
+            <button type="button" id="simCustomNext" aria-label="próximo mês">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="#10231A" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </div>
       </div>
-      <button type="button" class="btn-primary" id="simCustomBtn" style="width:100%;justify-content:center;">calcular até este mês</button>
+      <button type="button" class="btn-primary" id="simCustomBtn" style="width:100%;justify-content:center;margin-top:16px;">calcular período</button>
     </div>
 
     <div id="simResult" style="display:none;"></div>

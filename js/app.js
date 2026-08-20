@@ -1061,10 +1061,8 @@ document.getElementById('retirarSaveBtn').addEventListener('click', async ()=>{
 /* --- simular patrimônio futuro --- */
 // pura função de cálculo: reusa computeValorInvestido() como ponto de partida
 // e computeBudgetTotal() mês a mês — não mexe em nenhuma das duas.
-function computeSimulacaoPatrimonio(endMonth){
+function computeSimulacaoPatrimonio(startMonth, endMonth){
   const startValue = computeValorInvestido();
-  const today = todayISO();
-  const startMonth = today.slice(0,7);
   const months = [];
   let m = startMonth;
   while(m <= endMonth){
@@ -1079,20 +1077,23 @@ function computeSimulacaoPatrimonio(endMonth){
   }
   const total = months.reduce((acc,mo)=> acc + (mo.hasPrevisao ? mo.economia : 0), startValue);
   const missingCount = months.filter(mo=>!mo.hasPrevisao).length;
-  return { startValue, endMonth, months, total, missingCount };
+  return { startValue, startMonth, endMonth, months, total, missingCount };
 }
 
 const simOverlay = document.getElementById('simModalOverlay');
+let simStartMonth = null;
 let simCustomMonth = null;
 
-function updateSimCustomLabel(){
+function updateSimRangeLabels(){
+  document.getElementById('simStartLabel').textContent = monthLabelOf(simStartMonth);
   document.getElementById('simCustomLabel').textContent = monthLabelOf(simCustomMonth);
 }
 function openSimModal(){
   document.getElementById('simIntro').style.display = '';
   document.getElementById('simResult').style.display = 'none';
-  simCustomMonth = shiftMonth(todayISO().slice(0,7), 1);
-  updateSimCustomLabel();
+  simStartMonth = todayISO().slice(0,7);
+  simCustomMonth = shiftMonth(simStartMonth, 1);
+  updateSimRangeLabels();
   simOverlay.classList.add('open');
 }
 function closeSimModal(){ simOverlay.classList.remove('open'); }
@@ -1100,28 +1101,39 @@ document.getElementById('btnSimular').addEventListener('click', openSimModal);
 document.getElementById('simModalClose').addEventListener('click', closeSimModal);
 simOverlay.addEventListener('click', (e)=>{ if(e.target===simOverlay) closeSimModal(); });
 
-document.getElementById('simCustomPrev').addEventListener('click', ()=>{
+document.getElementById('simStartPrev').addEventListener('click', ()=>{
   const minMonth = todayISO().slice(0,7);
-  const prev = shiftMonth(simCustomMonth, -1);
+  const prev = shiftMonth(simStartMonth, -1);
   if(prev < minMonth) return; // não simula pra trás do mês atual
+  simStartMonth = prev;
+  updateSimRangeLabels();
+});
+document.getElementById('simStartNext').addEventListener('click', ()=>{
+  simStartMonth = shiftMonth(simStartMonth, 1);
+  if(simStartMonth > simCustomMonth) simCustomMonth = simStartMonth; // arrasta o fim junto se precisar
+  updateSimRangeLabels();
+});
+document.getElementById('simCustomPrev').addEventListener('click', ()=>{
+  const prev = shiftMonth(simCustomMonth, -1);
+  if(prev < simStartMonth) return; // não deixa o fim ficar antes do início
   simCustomMonth = prev;
-  updateSimCustomLabel();
+  updateSimRangeLabels();
 });
 document.getElementById('simCustomNext').addEventListener('click', ()=>{
   simCustomMonth = shiftMonth(simCustomMonth, 1);
-  updateSimCustomLabel();
+  updateSimRangeLabels();
 });
-document.getElementById('simCustomBtn').addEventListener('click', ()=> renderSimResult(simCustomMonth));
-document.getElementById('simShortcutYear').addEventListener('click', ()=> renderSimResult(todayISO().slice(0,4)+'-12'));
-document.getElementById('simShortcut3').addEventListener('click', ()=> renderSimResult(shiftMonth(todayISO().slice(0,7), 3)));
-document.getElementById('simShortcut6').addEventListener('click', ()=> renderSimResult(shiftMonth(todayISO().slice(0,7), 6)));
+document.getElementById('simCustomBtn').addEventListener('click', ()=> renderSimResult(simStartMonth, simCustomMonth));
+document.getElementById('simShortcutYear').addEventListener('click', ()=>{ const s=todayISO().slice(0,7); renderSimResult(s, todayISO().slice(0,4)+'-12'); });
+document.getElementById('simShortcut3').addEventListener('click', ()=>{ const s=todayISO().slice(0,7); renderSimResult(s, shiftMonth(s,3)); });
+document.getElementById('simShortcut6').addEventListener('click', ()=>{ const s=todayISO().slice(0,7); renderSimResult(s, shiftMonth(s,6)); });
 
-function renderSimResult(endMonth){
-  const sim = computeSimulacaoPatrimonio(endMonth);
+function renderSimResult(startMonth, endMonth){
+  const sim = computeSimulacaoPatrimonio(startMonth, endMonth);
   // soma só do que o período em si deve gerar, sem contar o que já está investido
   // hoje — derivado dos mesmos números que computeSimulacaoPatrimonio já calculou.
   const periodSum = sim.total - sim.startValue;
-  const startLabel = monthLabelOf(sim.months[0].month);
+  const startLabel = monthLabelOf(startMonth);
   const endLabel = monthLabelOf(endMonth);
   const periodLabel = startLabel===endLabel ? startLabel : `${startLabel} até ${endLabel}`;
   const warningHtml = sim.missingCount>0
@@ -1136,9 +1148,9 @@ function renderSimResult(endMonth){
   const resultEl = document.getElementById('simResult');
   resultEl.style.display = '';
   resultEl.innerHTML = `
-    <div class="sim-result-label">patrimônio projetado até ${endLabel}</div>
+    <div class="sim-result-label">patrimônio projetado (${periodLabel})</div>
     <div class="sim-result-value">${fmtBRL(sim.total)}</div>
-    <p class="sim-result-context">se você seguir exatamente o que planejou até aqui, é isso que seu patrimônio investido deve valer nessa data.</p>
+    <p class="sim-result-context">considerando o que você planejou nesse período, é isso que seu patrimônio investido deve valer no fim de ${endLabel}.</p>
     <div class="sim-result-secondary">
       <div class="sim-result-secondary-label">só o que ${periodLabel} deve gerar (sem contar o que você já tem investido hoje)</div>
       <div class="sim-result-secondary-value ${periodSum>=0?'pos':'neg'}">${periodSum>=0?'+':''}${fmtBRL(periodSum)}</div>

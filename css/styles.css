@@ -18,7 +18,7 @@
     --shadow:0 6px 20px rgba(16,35,26,0.08);
   }
   *{box-sizing:border-box;}
-  html,body{margin:0;padding:0;}
+  html,body{margin:0;padding:0;overflow-x:hidden;max-width:100%;}
   body{
     background:var(--cream);
     color:var(--ink);
@@ -87,7 +87,10 @@
     display:flex;gap:4px;
     background:var(--dark-2);
     padding:4px;border-radius:999px;
+    max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
   }
+  .tabs::-webkit-scrollbar{display:none;}
   .tab{
     border:none;background:transparent;color:var(--cream);
     opacity:0.7;
@@ -268,6 +271,15 @@
   }
   .sim-divider::before, .sim-divider::after{
     content:"";flex:1 1 auto;height:1px;background:#ECE3CC;min-width:12px;
+  }
+  .sim-range{display:flex;gap:16px;}
+  .sim-range-col{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:8px;}
+  .sim-range-label{font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;}
+  .sim-range .month-nav button{width:30px;height:30px;flex-shrink:0;}
+  .sim-range .month-label{white-space:nowrap;}
+  @media(max-width:420px){
+    .sim-range{gap:8px;}
+    .sim-range .month-label{font-size:12.5px!important;}
   }
   .sim-result-label{font-size:13px;color:var(--muted);text-align:center;margin-bottom:6px;}
   .sim-result-value{
@@ -741,6 +753,6 @@
     .stat-grid{grid-template-columns:1fr 1fr;gap:10px;}
     .stat-value{font-size:20px;}
     .topbar-center{flex-direction:column;width:100%;}
-    .tabs{width:100%;justify-content:center;}
+    .tabs{width:100%;justify-content:flex-start;}
     .btn-cta{width:100%;justify-content:center;}
   }
