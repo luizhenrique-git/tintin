@@ -509,6 +509,28 @@
   </div>
 </div>
 
+<!-- EDITAR MOVIMENTAÇÃO (histórico da aba Investimentos) -->
+<div class="modal-overlay" id="investEditModalOverlay">
+  <div class="modal" style="max-width:380px;">
+    <button class="close-x" id="investEditModalClose">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    </button>
+    <h2 id="investEditTitle">editar movimentação</h2>
+    <div class="field">
+      <label>mês</label>
+      <input type="month" id="investEditMonth">
+    </div>
+    <div class="field">
+      <label>valor (R$)</label>
+      <input type="text" inputmode="decimal" id="investEditAmount" placeholder="0,00">
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="investEditCancel">cancelar</button>
+      <button type="button" class="btn-primary" id="investEditSaveBtn">salvar</button>
+    </div>
+  </div>
+</div>
+
 <!-- SIMULAR PATRIMÔNIO FUTURO (Investimentos tab) -->
 <div class="modal-overlay" id="simModalOverlay">
   <div class="modal" style="max-width:460px;">

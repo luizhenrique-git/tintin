@@ -256,6 +256,7 @@
   .invest-history-row .ihamt{font-weight:700;white-space:nowrap;font-family:'Baloo 2';}
   .invest-history-row .ihamt.pos{color:#1F8C4C;}
   .invest-history-row .ihamt.neg{color:var(--orange-2);}
+  .invest-history-row .icon-btn{flex-shrink:0;}
 
   @media(max-width:560px){
     .invest-hero{padding:24px 20px;}

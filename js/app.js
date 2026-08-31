@@ -968,9 +968,27 @@ function renderInvestHistory(){
       <span class="ihdate">${fmtDate(t.date).slice(0,5)}</span>
       <span class="ihdesc">${escapeHtml(t.desc)}<span class="ihcat">${escapeHtml(t.category)}</span></span>
       <span class="ihamt ${sign}">${amtText}</span>
+      <button type="button" class="icon-btn" onclick="openInvestEditModal('${t.id}')" aria-label="editar">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+      </button>
+      <button type="button" class="icon-btn danger" onclick="deleteInvestTx('${t.id}')" aria-label="excluir">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M5 7h14M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-7 0 1 13a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
     </div>`;
   }).join('');
 }
+window.deleteInvestTx = async function(id){
+  const item = state.transactions.find(t=>t.id===id);
+  if(!item) return;
+  const ok = await showDialog({title:'excluir movimentação', message:`excluir "${item.desc}" (${fmtBRL(item.amount)})?`, okLabel:'excluir'});
+  if(!ok) return;
+  pushUndo();
+  state.transactions = state.transactions.filter(t=>t.id!==id);
+  await persistTx();
+  renderDashboard();
+  renderInvestimentos();
+  showToast('movimentação excluída', true);
+};
 function renderInvestimentos(){
   document.getElementById('investHeroValue').textContent = fmtBRL(computeValorInvestido());
   const { aporte, rendimento } = computeInvestBreakdown();
@@ -1014,10 +1032,9 @@ guardAsyncClick(document.getElementById('aportarSaveBtn'), async ()=>{
   }
   pushUndo();
   const today = todayISO();
-  // se for o mês atual, usa a data de hoje (senão a data ficaria no futuro,
-  // já que o último dia do mês corrente ainda não chegou, e o aporte não
-  // apareceria no valor investido até lá); em meses passados, usa o último dia
-  const aporteDate = (month===today.slice(0,7)) ? today : lastDayOfMonth(month);
+  // se for o mês atual, usa a data de hoje; em outros meses, usa o DIA 1 —
+  // segue o fluxo real: fecha o mês, aporta a sobra no dia 1 do mês seguinte
+  const aporteDate = (month===today.slice(0,7)) ? today : month+'-01';
   state.transactions.push({
     id: crypto.randomUUID(),
     date: aporteDate,
@@ -1065,8 +1082,8 @@ guardAsyncClick(document.getElementById('retirarSaveBtn'), async ()=>{
   }
   pushUndo();
   const today = todayISO();
-  // mesma regra do aporte: mês atual usa a data de hoje, meses passados usam o último dia
-  const retiradaDate = (month===today.slice(0,7)) ? today : lastDayOfMonth(month);
+  // mesma regra do aporte: mês atual usa a data de hoje, outros meses usam o dia 1
+  const retiradaDate = (month===today.slice(0,7)) ? today : month+'-01';
   state.transactions.push({
     id: crypto.randomUUID(),
     date: retiradaDate,
@@ -1081,6 +1098,53 @@ guardAsyncClick(document.getElementById('retirarSaveBtn'), async ()=>{
   renderDashboard();
   renderInvestimentos();
   showToast('tintin! retirada registrada', true);
+});
+
+/* --- editar movimentação (histórico de Investimentos) --- */
+const investEditOverlay = document.getElementById('investEditModalOverlay');
+let editingInvestTxId = null;
+window.openInvestEditModal = function(id){
+  const item = state.transactions.find(t=>t.id===id);
+  if(!item) return;
+  editingInvestTxId = id;
+  document.getElementById('investEditTitle').textContent = `editar "${item.desc}"`;
+  document.getElementById('investEditMonth').value = item.date.slice(0,7);
+  document.getElementById('investEditAmount').value = item.amount.toFixed(2).replace('.', ',');
+  [document.getElementById('investEditMonth'), document.getElementById('investEditAmount')].forEach(el=>el.classList.remove('invalid'));
+  investEditOverlay.classList.add('open');
+  setTimeout(()=>document.getElementById('investEditAmount').focus(), 60);
+};
+function closeInvestEditModal(){ investEditOverlay.classList.remove('open'); editingInvestTxId = null; }
+document.getElementById('investEditModalClose').addEventListener('click', closeInvestEditModal);
+document.getElementById('investEditCancel').addEventListener('click', closeInvestEditModal);
+investEditOverlay.addEventListener('click', (e)=>{ if(e.target===investEditOverlay) closeInvestEditModal(); });
+guardAsyncClick(document.getElementById('investEditSaveBtn'), async ()=>{
+  const monthEl = document.getElementById('investEditMonth');
+  const amountEl = document.getElementById('investEditAmount');
+  [monthEl, amountEl].forEach(el=>el.classList.remove('invalid'));
+  const month = monthEl.value;
+  const amount = parseAmount(amountEl.value);
+  const invalids = [];
+  if(!month) invalids.push(monthEl);
+  if(amountEl.value==='' || isNaN(amount) || amount<=0) invalids.push(amountEl);
+  if(invalids.length){
+    invalids.forEach(el=>el.classList.add('invalid'));
+    invalids[0].focus();
+    showToast('preencha os campos destacados em laranja');
+    return;
+  }
+  const item = state.transactions.find(t=>t.id===editingInvestTxId);
+  if(!item){ closeInvestEditModal(); return; }
+  pushUndo();
+  const today = todayISO();
+  // mesma regra usada em aportar/retirar: mês atual usa a data de hoje, outros meses usam o dia 1
+  item.date = (month===today.slice(0,7)) ? today : month+'-01';
+  item.amount = amount;
+  await persistTx();
+  closeInvestEditModal();
+  renderDashboard();
+  renderInvestimentos();
+  showToast('tintin! movimentação atualizada', true);
 });
 
 /* --- simular patrimônio futuro --- */
