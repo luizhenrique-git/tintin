@@ -202,7 +202,18 @@
     </div>
     <div class="panel" style="padding:0;overflow-x:auto;">
       <table class="tx-table saldos-table">
-        <thead><tr><th>dia</th><th>saldo inicial</th><th>entradas</th><th>saídas</th><th>saldo do dia</th><th></th></tr></thead>
+        <thead><tr><th>dia</th><th>saldo inicial</th><th>entradas</th><th>saídas</th>
+          <th class="saldos-mode-th">
+            <button type="button" id="saldosModeBtn" class="saldos-mode-btn">
+              <span id="saldosModeBtnLabel">saldo do dia</span>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div class="saldos-mode-menu" id="saldosModeMenu">
+              <button type="button" data-mode="dia">saldo do dia</button>
+              <button type="button" data-mode="total">saldo total</button>
+            </div>
+          </th>
+        <th></th></tr></thead>
         <tbody id="saldosTableBody"></tbody>
         <tfoot id="saldosTableFoot"></tfoot>
       </table>

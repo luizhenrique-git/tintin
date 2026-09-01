@@ -1265,6 +1265,35 @@ function daysInMonth(ym){
 document.getElementById('saldosPrevMonth').addEventListener('click', ()=>{ saldosMonth = shiftMonth(saldosMonth,-1); renderSaldos(); });
 document.getElementById('saldosNextMonth').addEventListener('click', ()=>{ saldosMonth = shiftMonth(saldosMonth,1); renderSaldos(); });
 
+// preferência de como calcular o "saldo do dia" no Mapa: quem usa 1 conta só quer
+// entradas somando no saldo (padrão); quem separa entradas e saídas em contas
+// diferentes (segue o método à risca) quer o saldo refletindo só o que sai da
+// conta operacional. Guardado no navegador — é uma preferência de visualização,
+// não um dado financeiro que precise sincronizar entre dispositivos.
+let saldosMode = localStorage.getItem('tintin_saldos_mode') || 'total';
+const saldosModeBtn = document.getElementById('saldosModeBtn');
+const saldosModeMenu = document.getElementById('saldosModeMenu');
+function updateSaldosModeUI(){
+  document.getElementById('saldosModeBtnLabel').textContent = saldosMode==='dia' ? 'saldo do dia' : 'saldo total';
+  saldosModeMenu.querySelectorAll('button').forEach(b=> b.classList.toggle('active', b.dataset.mode===saldosMode));
+}
+updateSaldosModeUI();
+saldosModeBtn.addEventListener('click', (e)=>{
+  e.stopPropagation();
+  saldosModeMenu.classList.toggle('open');
+});
+saldosModeMenu.querySelectorAll('button').forEach(btn=>{
+  btn.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    saldosMode = btn.dataset.mode;
+    try{ localStorage.setItem('tintin_saldos_mode', saldosMode); }catch(err){}
+    updateSaldosModeUI();
+    saldosModeMenu.classList.remove('open');
+    renderSaldos();
+  });
+});
+document.addEventListener('click', ()=> saldosModeMenu.classList.remove('open'));
+
 function renderSaldos(){
   document.getElementById('saldosMonthLabel').textContent = monthLabelOf(saldosMonth);
   const nDays = daysInMonth(saldosMonth);
@@ -1285,7 +1314,10 @@ function renderSaldos(){
     const saidasReais = dayTx.filter(t=>t.type==='despesa').reduce((s,t)=>s+t.amount,0);
     const saidasPrevistas = state.budgetItems.filter(b=>b.date===dateStr && (b.type||'despesa')==='despesa' && !b.paid && !b.variable).reduce((s,b)=>s+b.amount,0);
     const saidas = saidasReais + saidasPrevistas;
-    const saldoDoDia = saldoInicialDia + entradas - saidas;
+    // "total": soma entradas no saldo (quem usa 1 conta só). "dia": ignora entradas
+    // na soma (quem separa entradas numa conta à parte, seguindo o método à risca)
+    // — as entradas continuam exibidas na tabela, só não entram na conta do saldo.
+    const saldoDoDia = saldosMode==='dia' ? (saldoInicialDia - saidas) : (saldoInicialDia + entradas - saidas);
     totalEntradas += entradas; totalSaidas += saidas;
     const isToday = dateStr===today;
     let saldoClass;

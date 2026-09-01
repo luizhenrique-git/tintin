@@ -616,6 +616,26 @@
   .modal h2{font-size:20px;margin:0 0 18px;}
   .field{margin-bottom:14px;}
   .field label{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.03em;}
+  .saldos-mode-th{position:relative;}
+  .saldos-mode-btn{
+    display:flex;align-items:center;gap:4px;background:none;border:none;padding:0;
+    font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);
+    font-weight:700;font-family:inherit;
+  }
+  .saldos-mode-btn:hover{color:var(--ink);}
+  .saldos-mode-menu{
+    display:none;position:absolute;top:100%;left:0;margin-top:6px;z-index:10;
+    background:var(--white);border-radius:var(--radius-sm);box-shadow:var(--shadow);
+    padding:4px;min-width:130px;
+  }
+  .saldos-mode-menu.open{display:block;}
+  .saldos-mode-menu button{
+    display:block;width:100%;text-align:left;background:none;border:none;
+    padding:8px 10px;border-radius:6px;font-size:13px;font-weight:600;
+    text-transform:none;letter-spacing:normal;color:var(--ink);
+  }
+  .saldos-mode-menu button:hover{background:var(--cream);}
+  .saldos-mode-menu button.active{color:var(--orange-2);}
   .field input, .field select{
     width:100%;padding:11px 14px;border-radius:var(--radius-sm);border:1.5px solid #ECE3CC;
     background:var(--cream);font-size:14.5px;outline:none;color:var(--ink);
