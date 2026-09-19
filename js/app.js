@@ -530,9 +530,9 @@ function renderDashboard(){
     if(receitasPrevistasMes>0 && previstoProximo>0){
       ecoEl.textContent = fmtBRL(economiaPrevista);
       ecoEl.className = 'stat-value ' + (economiaPrevista>=0?'pos':'neg');
-      ecoSubEl.innerHTML = `(resultado do mês): ${fmtBRL(resultadoDoMesPrevisto)}`
-        + `<br>(rendimento): ${fmtBRL(rendimentoPrevisto)}`
-        + `<br>(total): ${fmtBRL(economiaPrevista)}`;
+      ecoSubEl.innerHTML = `resultado do mês: ${fmtBRL(resultadoDoMesPrevisto)}`
+        + `<br>rendimento: ${fmtBRL(rendimentoPrevisto)}`
+        + `<br><strong>total: ${fmtBRL(economiaPrevista)}</strong>`;
     } else {
       ecoEl.textContent = 'sem previsão';
       ecoEl.className = 'stat-value';
@@ -541,10 +541,10 @@ function renderDashboard(){
   } else {
     ecoEl.textContent = fmtBRL(economiaReal);
     ecoEl.className = 'stat-value ' + (economiaReal>=0?'pos':'neg');
-    ecoSubEl.innerHTML = `(resultado do mês): ${fmtBRL(resultadoDoMesReal)}`
+    ecoSubEl.innerHTML = `resultado do mês: ${fmtBRL(resultadoDoMesReal)}`
       + (overrun>0 ? ` (já descontado o estouro de ${fmtBRL(overrun)})` : '')
-      + `<br>(rendimento): ${fmtBRL(rendimentoReal)}`
-      + `<br>(total): ${fmtBRL(economiaReal)}`
+      + `<br>rendimento: ${fmtBRL(rendimentoReal)}`
+      + `<br><strong>total: ${fmtBRL(economiaReal)}</strong>`
       + (previstoProximo<=0 ? `<br>cadastre a previsão de ${monthLabelOf(nextMonth)} pra este número fazer sentido` : '');
   }
 
@@ -2189,6 +2189,16 @@ function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 function escapeAttr(s){ return String(s).replace(/'/g, "\\'"); }
+
+/* ---------------- Barra de abas: troca pro tom claro/vidro ao rolar ---------------- */
+(function(){
+  const SCROLL_THRESHOLD = 40;
+  function onScroll(){
+    document.body.classList.toggle('scrolled', window.scrollY > SCROLL_THRESHOLD);
+  }
+  window.addEventListener('scroll', onScroll, { passive:true });
+  onScroll();
+})();
 
 /* ---------------- Init ---------------- */
 async function initApp(){
