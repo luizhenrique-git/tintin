@@ -530,9 +530,9 @@ function renderDashboard(){
     if(receitasPrevistasMes>0 && previstoProximo>0){
       ecoEl.textContent = fmtBRL(economiaPrevista);
       ecoEl.className = 'stat-value ' + (economiaPrevista>=0?'pos':'neg');
-      ecoSubEl.innerHTML = `resultado do mês: ${fmtBRL(resultadoDoMesPrevisto)}`
-        + `<br>rendimento: ${fmtBRL(rendimentoPrevisto)}`
-        + `<br><strong>total: ${fmtBRL(economiaPrevista)}</strong>`;
+      ecoSubEl.innerHTML = `<div class="tip-row"><span>resultado do mês</span><b>${fmtBRL(resultadoDoMesPrevisto)}</b></div>`
+        + `<div class="tip-row"><span>rendimento</span><b>${fmtBRL(rendimentoPrevisto)}</b></div>`
+        + `<div class="tip-row total"><span>total</span><b>${fmtBRL(economiaPrevista)}</b></div>`;
     } else {
       ecoEl.textContent = 'sem previsão';
       ecoEl.className = 'stat-value';
@@ -541,11 +541,11 @@ function renderDashboard(){
   } else {
     ecoEl.textContent = fmtBRL(economiaReal);
     ecoEl.className = 'stat-value ' + (economiaReal>=0?'pos':'neg');
-    ecoSubEl.innerHTML = `resultado do mês: ${fmtBRL(resultadoDoMesReal)}`
-      + (overrun>0 ? ` (já descontado o estouro de ${fmtBRL(overrun)})` : '')
-      + `<br>rendimento: ${fmtBRL(rendimentoReal)}`
-      + `<br><strong>total: ${fmtBRL(economiaReal)}</strong>`
-      + (previstoProximo<=0 ? `<br>cadastre a previsão de ${monthLabelOf(nextMonth)} pra este número fazer sentido` : '');
+    ecoSubEl.innerHTML = `<div class="tip-row"><span>resultado do mês</span><b>${fmtBRL(resultadoDoMesReal)}</b></div>`
+      + `<div class="tip-row"><span>rendimento</span><b>${fmtBRL(rendimentoReal)}</b></div>`
+      + `<div class="tip-row total"><span>total</span><b>${fmtBRL(economiaReal)}</b></div>`
+      + (overrun>0 ? `<div class="tip-note">já descontado o estouro de ${fmtBRL(overrun)}</div>` : '')
+      + (previstoProximo<=0 ? `<div class="tip-note">cadastre a previsão de ${monthLabelOf(nextMonth)} pra este número fazer sentido</div>` : '');
   }
 
   const previsaoItems = state.budgetItems.filter(b=>b.month===currentMonth && (b.type||'despesa')==='despesa').map(b=>({category:b.category, amount:b.amount, type:'despesa'}));
@@ -1293,6 +1293,19 @@ saldosModeMenu.querySelectorAll('button').forEach(btn=>{
   });
 });
 document.addEventListener('click', ()=> saldosModeMenu.classList.remove('open'));
+
+/* ---------------- Tooltips "i" dos cards do painel (tap-friendly no celular) ---------------- */
+document.querySelectorAll('.stat-info').forEach(info=>{
+  info.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    const wasOpen = info.classList.contains('open');
+    document.querySelectorAll('.stat-info.open').forEach(o=>o.classList.remove('open'));
+    if(!wasOpen) info.classList.add('open');
+  });
+});
+document.addEventListener('click', ()=>{
+  document.querySelectorAll('.stat-info.open').forEach(o=>o.classList.remove('open'));
+});
 
 function renderSaldos(){
   document.getElementById('saldosMonthLabel').textContent = monthLabelOf(saldosMonth);
