@@ -500,6 +500,9 @@
   .auth-error{color:var(--orange-2)!important;background:#FCEDE7;border-radius:var(--radius-sm);padding:10px 12px;margin:0 0 4px!important;}
   .auth-toggle-text{text-align:center;font-size:13px;color:var(--muted);margin-top:16px;}
   .auth-toggle-text a{color:var(--dark);font-weight:700;text-decoration:none;border-bottom:1.5px solid var(--lime);}
+  .auth-forgot-link{text-align:right;font-size:12.5px;margin:-8px 0 14px;}
+  .auth-forgot-link a{color:var(--muted);text-decoration:none;}
+  .auth-forgot-link a:hover{color:var(--orange-2);text-decoration:underline;}
   .auth-toggle-text a:hover{color:var(--orange-2);border-color:var(--orange-2);}
 
   @media (max-width: 560px){
@@ -858,4 +861,86 @@
     /* tabela do Mapa: célula mais enxuta, ainda rola de lado se precisar */
     .tx-table thead th{padding:9px 8px;font-size:10.5px;}
     .tx-table tbody td{padding:9px 8px;font-size:12.5px;}
+  }
+
+  /* ============================================================
+     Cartão de saudação + navegação inferior — EXCLUSIVOS mobile.
+     Em telas largas nada disso aparece (display:none por padrão,
+     só ligado dentro do media query abaixo).
+     ============================================================ */
+  .wcard{display:none;}
+  .bottom-nav{display:none;}
+
+  @media(max-width:768px){
+    .wcard{
+      display:block;
+      position:relative;
+      overflow:hidden;
+      border-radius:20px;
+      padding:19px;
+      margin-bottom:18px;
+      background:
+        radial-gradient(circle at 100% 0%, rgba(198,241,53,0.22), transparent 55%),
+        radial-gradient(circle at 0% 100%, rgba(244,98,44,0.16), transparent 55%),
+        linear-gradient(155deg, #14291F, var(--dark), #0A160F);
+    }
+    .wcard::before{
+      content:'';
+      position:absolute;inset:0;
+      opacity:0.07;
+      mix-blend-mode:overlay;
+      pointer-events:none;
+      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+    .wcard-greeting{
+      position:relative;z-index:1;
+      font-family:'Baloo 2',sans-serif;font-weight:800;font-size:19px;
+      color:var(--lime);
+      text-shadow:0 1px 12px rgba(198,241,53,0.25);
+    }
+    .wcard-greeting .wcard-name{color:var(--cream);}
+    .wcard-tip{
+      position:relative;z-index:1;
+      font-style:italic;font-size:11.5px;color:#B9C4B9;margin-top:5px;line-height:1.4;
+    }
+
+    /* barra de abas some do topo (substituída pela navegação inferior);
+       marca + botão de sair continuam sempre visíveis, sem o efeito de
+       sumir/virar vidro ao rolar (isso é só pra quando as abas existem). */
+    .topbar-center{display:none;}
+    body.scrolled .topbar{position:relative;background:var(--dark);}
+    body.scrolled .brand, body.scrolled .topbar-logout-icon{opacity:1;visibility:visible;pointer-events:auto;}
+
+    /* navegação inferior */
+    .bottom-nav{
+      display:flex;
+      position:fixed;left:0;right:0;bottom:0;z-index:70;
+      background:var(--white);
+      box-shadow:0 -6px 18px rgba(16,35,26,0.06);
+      padding:6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+    }
+    .bnav-item{
+      flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+      min-height:44px;min-width:44px;padding:4px 2px;
+      background:transparent;border:none;color:var(--muted);
+      border-radius:14px;
+    }
+    .bnav-icon{
+      width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+      border-radius:10px;flex-shrink:0;
+    }
+    .bnav-icon svg{width:19px;height:19px;}
+    .bnav-label{display:none;font-size:9.5px;font-weight:700;white-space:nowrap;}
+    .bnav-item.active{color:var(--dark);}
+    .bnav-item.active .bnav-icon{background:rgba(198,241,53,0.35);}
+    .bnav-item.active .bnav-label{display:block;}
+
+    /* espaço no fim da página pra navegação inferior não cobrir conteúdo */
+    main{padding-bottom:calc(76px + env(safe-area-inset-bottom, 0px));}
+
+    /* botão + flutuante sobrepõe a navegação inferior, com anel na cor do fundo */
+    .fab-novo{
+      bottom:calc(58px + env(safe-area-inset-bottom, 0px));
+      box-shadow:0 0 0 5px var(--cream), 0 10px 26px rgba(244,98,44,0.45);
+    }
   }

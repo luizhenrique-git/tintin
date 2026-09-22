@@ -35,31 +35,53 @@ function setAuthLoading(loading){
   const btn = document.getElementById('authSubmitBtn');
   if(!btn) return;
   btn.disabled = loading;
-  btn.textContent = loading ? 'aguarde...' : (authMode==='signup' ? 'criar conta' : 'entrar');
+  if(loading){ btn.textContent = 'aguarde...'; return; }
+  btn.textContent = { signup:'criar conta', forgot:'enviar link de recuperação', newpassword:'salvar nova senha' }[authMode] || 'entrar';
 }
 
-let authMode = 'login'; // 'login' | 'signup'
+let authMode = 'login'; // 'login' | 'signup' | 'forgot' | 'newpassword'
 
 function renderAuthMode(){
   const title = document.getElementById('authTitle');
   const toggleText = document.getElementById('authToggleText');
   const submitBtn = document.getElementById('authSubmitBtn');
   const nameField = document.getElementById('authNameField');
+  const passwordField = document.getElementById('authPasswordField');
+  const forgotWrap = document.getElementById('authForgotWrap');
+  const passwordInput = document.getElementById('authPassword');
+
+  nameField.style.display = authMode==='signup' ? '' : 'none';
+  passwordField.style.display = (authMode==='forgot') ? 'none' : '';
+  forgotWrap.style.display = (authMode==='login') ? '' : 'none';
+
   if(authMode==='signup'){
-    if(title) title.textContent = 'criar sua conta';
-    if(submitBtn) submitBtn.textContent = 'criar conta';
-    if(toggleText) toggleText.innerHTML = 'já tem conta? <a href="#" id="authToggleLink">entrar</a>';
-    if(nameField) nameField.style.display = '';
+    title.textContent = 'criar sua conta';
+    submitBtn.textContent = 'criar conta';
+    toggleText.innerHTML = 'já tem conta? <a href="#" id="authToggleLink">entrar</a>';
+    passwordInput.placeholder = 'mínimo 6 caracteres';
+    passwordInput.autocomplete = 'new-password';
+  } else if(authMode==='forgot'){
+    title.textContent = 'recuperar senha';
+    submitBtn.textContent = 'enviar link de recuperação';
+    toggleText.innerHTML = 'lembrou a senha? <a href="#" id="authToggleLink">entrar</a>';
+  } else if(authMode==='newpassword'){
+    title.textContent = 'defina sua nova senha';
+    submitBtn.textContent = 'salvar nova senha';
+    toggleText.innerHTML = '';
+    passwordInput.placeholder = 'nova senha (mínimo 6 caracteres)';
+    passwordInput.autocomplete = 'new-password';
   } else {
-    if(title) title.textContent = 'entrar no tintin.';
-    if(submitBtn) submitBtn.textContent = 'entrar';
-    if(toggleText) toggleText.innerHTML = 'não tem conta? <a href="#" id="authToggleLink">criar agora</a>';
-    if(nameField) nameField.style.display = 'none';
+    title.textContent = 'entrar no tintin.';
+    submitBtn.textContent = 'entrar';
+    toggleText.innerHTML = 'não tem conta? <a href="#" id="authToggleLink">criar agora</a>';
+    passwordInput.placeholder = 'mínimo 6 caracteres';
+    passwordInput.autocomplete = 'current-password';
   }
+
   const link = document.getElementById('authToggleLink');
   if(link) link.addEventListener('click', (e)=>{
     e.preventDefault();
-    authMode = authMode==='signup' ? 'login' : 'signup';
+    authMode = authMode==='signup' ? 'login' : (authMode==='forgot' ? 'login' : authMode);
     setAuthError('');
     renderAuthMode();
   });
@@ -71,6 +93,43 @@ async function handleAuthSubmit(e){
   const email = document.getElementById('authEmail').value.trim();
   const password = document.getElementById('authPassword').value;
   const displayName = document.getElementById('authName') ? document.getElementById('authName').value.trim() : '';
+
+  if(authMode==='forgot'){
+    if(!email){
+      setAuthError('preencha seu e-mail.');
+      return;
+    }
+    setAuthLoading(true);
+    try{
+      const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin
+      });
+      if(error) throw error;
+      setAuthLoading(false);
+      setAuthError('link de recuperação enviado! verifique seu e-mail.');
+    }catch(err){
+      setAuthLoading(false);
+      setAuthError(traduzErroAuth(err.message));
+    }
+    return;
+  }
+
+  if(authMode==='newpassword'){
+    if(!password || password.length < 6){
+      setAuthError('a nova senha precisa ter pelo menos 6 caracteres.');
+      return;
+    }
+    setAuthLoading(true);
+    try{
+      const { data, error } = await supabaseClient.auth.updateUser({ password });
+      if(error) throw error;
+      onAuthSuccess(data.user);
+    }catch(err){
+      setAuthLoading(false);
+      setAuthError(traduzErroAuth(err.message));
+    }
+    return;
+  }
 
   if(!email || !password){
     setAuthError('preencha e-mail e senha.');
@@ -86,7 +145,7 @@ async function handleAuthSubmit(e){
     if(authMode==='signup'){
       const { data, error } = await supabaseClient.auth.signUp({
         email, password,
-        options: { data: { display_name: displayName || email } }
+        options: { data: { display_name: displayName || email }, emailRedirectTo: window.location.origin }
       });
       if(error) throw error;
       if(data.session){
@@ -128,24 +187,39 @@ async function handleLogout(){
 }
 
 async function initAuth(){
-  const { data: { session } } = await supabaseClient.auth.getSession();
   renderAuthMode();
   document.getElementById('authForm').addEventListener('submit', handleAuthSubmit);
   const logoutBtn = document.getElementById('btnLogout');
   if(logoutBtn) logoutBtn.addEventListener('click', handleLogout);
+  const forgotLink = document.getElementById('authForgotLink');
+  if(forgotLink) forgotLink.addEventListener('click', (e)=>{
+    e.preventDefault();
+    authMode = 'forgot';
+    setAuthError('');
+    renderAuthMode();
+  });
 
-  if(session && session.user){
-    onAuthSuccess(session.user);
-  } else {
-    showAuthOverlay();
-  }
-
+  // registra o listener ANTES do getSession() pra não perder o evento
+  // PASSWORD_RECOVERY, que o supabase-js pode disparar ao processar o link
+  // de recuperação de senha assim que a página carrega.
   supabaseClient.auth.onAuthStateChange((event, newSession) => {
     if(event === 'SIGNED_OUT'){
       currentUser = null;
       showAuthOverlay();
+    } else if(event === 'PASSWORD_RECOVERY'){
+      authMode = 'newpassword';
+      setAuthError('');
+      renderAuthMode();
+      showAuthOverlay();
     }
   });
+
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if(session && session.user && authMode !== 'newpassword'){
+    onAuthSuccess(session.user);
+  } else if(authMode !== 'newpassword'){
+    showAuthOverlay();
+  }
 }
 
 // o script fica no fim do <body>, então o DOM já está pronto quando ele roda

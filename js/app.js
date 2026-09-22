@@ -366,19 +366,22 @@ window.addEventListener('unhandledrejection', (e)=>{
 });
 
 /* ---------------- Tabs ---------------- */
-document.querySelectorAll('.tab').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
-    document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('view-'+btn.dataset.tab).classList.add('active');
-    if(btn.dataset.tab==='lancamentos') renderRealizado();
-    if(btn.dataset.tab==='categorias') renderCategorias();
-    if(btn.dataset.tab==='dashboard') renderDashboard();
-    if(btn.dataset.tab==='saldos') renderSaldos();
-    if(btn.dataset.tab==='previsao') renderPrevisao();
-    if(btn.dataset.tab==='investimentos') renderInvestimentos();
-  });
+// selectTab() é a lógica única de troca de view, usada tanto pelas abas do
+// topo (desktop) quanto pela navegação inferior (mobile) — só muda quem
+// dispara a chamada, a lógica de navegação é a mesma nos dois casos.
+function selectTab(tabName){
+  document.querySelectorAll('.tab, .bnav-item').forEach(b=>b.classList.toggle('active', b.dataset.tab===tabName));
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-'+tabName).classList.add('active');
+  if(tabName==='lancamentos') renderRealizado();
+  if(tabName==='categorias') renderCategorias();
+  if(tabName==='dashboard') renderDashboard();
+  if(tabName==='saldos') renderSaldos();
+  if(tabName==='previsao') renderPrevisao();
+  if(tabName==='investimentos') renderInvestimentos();
+}
+document.querySelectorAll('.tab, .bnav-item').forEach(btn=>{
+  btn.addEventListener('click', ()=> selectTab(btn.dataset.tab));
 });
 
 /* ---------------- Dashboard ---------------- */
@@ -460,7 +463,39 @@ document.querySelectorAll('#despesaModeToggle button').forEach(btn=>{
     renderDashboard();
   });
 });
+// cartão de saudação (só visível em mobile via CSS) — saudação pela hora local
+// e recado motivador com base em gasto realizado x saldo inicial do mês ATUAL
+// (não o mês navegado no painel), reusando as funções de cálculo já existentes.
+function renderGreetingCard(){
+  const greetEl = document.getElementById('wcardGreeting');
+  const tipEl = document.getElementById('wcardTip');
+  if(!greetEl || !tipEl) return;
+
+  const hour = new Date().getHours();
+  const saudacao = (hour>=5 && hour<12) ? 'bom dia' : (hour>=12 && hour<18) ? 'boa tarde' : 'boa noite';
+  const rawName = (typeof currentUser!=='undefined' && currentUser && currentUser.user_metadata && currentUser.user_metadata.display_name) || '';
+  const firstName = (rawName && !rawName.includes('@')) ? rawName.trim().split(/\s+/)[0] : '';
+  greetEl.innerHTML = firstName ? `${saudacao}, <span class="wcard-name">${escapeHtml(firstName)}</span>` : saudacao;
+
+  const ymAtual = todayISO().slice(0,7);
+  const diaDoMes = Number(todayISO().slice(8,10));
+  const inicial = computeSaldoInicialDoMes(ymAtual);
+  const gasto = computeSaidasReaisDoMes(ymAtual);
+  const overrun = computeOverrunDoMes(ymAtual);
+  let tip;
+  if(inicial<=0 || diaDoMes<=3){
+    tip = 'um novo mês começando — hora de manter o plano em dia.';
+  } else {
+    const pct = gasto/inicial*100;
+    if(overrun>0 || pct>=100) tip = 'esse mês passou do planejado — sem problema, é só ajustar o próximo.';
+    else if(pct>=70) tip = 'está quase no limite do combinado — ainda dá pra segurar até o fim do mês.';
+    else tip = 'você está dentro do combinado esse mês. bora manter assim.';
+  }
+  tipEl.textContent = tip;
+}
+
 function renderDashboard(){
+  renderGreetingCard();
   document.getElementById('monthLabel').textContent = monthLabelOf(currentMonth);
   const monthTx = txForMonth(currentMonth);
   const monthTxReal = monthTx.filter(t=>t.category!=='Investimento');
@@ -2279,12 +2314,7 @@ async function dismissReminder(){
 document.getElementById('reminderOk').addEventListener('click', dismissReminder);
 guardAsyncClick(document.getElementById('reminderGoMapa'), async ()=>{
   await dismissReminder();
-  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
-  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
-  const mapaTab = document.querySelector('.tab[data-tab="saldos"]');
-  if(mapaTab) mapaTab.classList.add('active');
-  document.getElementById('view-saldos').classList.add('active');
   saldosMonth = todayISO().slice(0,7);
-  renderSaldos();
+  selectTab('saldos');
 });
 
