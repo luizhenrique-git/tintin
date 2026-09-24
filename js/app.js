@@ -91,7 +91,8 @@ let state = {
   budgetItems: [],    // [{ id, category, desc, amount, month:"YYYY-MM", seriesId, seriesIndex, seriesTotal }]
   closedMonths: [],    // ["YYYY-MM", ...] months already closed via "fechar mês"
   saldoInicialOverrides: {}, // { "YYYY-MM": number } — manual override for the Mapa's day-1 saldo inicial
-  dismissedReminders: []     // ["YYYY-MM-DD", ...] days whose bill reminder popup was already dismissed
+  dismissedReminders: [],    // ["YYYY-MM-DD", ...] days whose bill reminder popup was already dismissed
+  monthNotes: {}             // { "YYYY-MM": string } — observação livre do mês, mostrada no painel
 };
 let currentMonth; // "YYYY-MM"
 let saldosMonth; // "YYYY-MM" — independent month cursor for the Saldos tab
@@ -155,6 +156,7 @@ async function loadState(){
   state.saldoInicialOverrides = data.saldoInicialOverrides;
   state.closedMonths = data.closedMonths;
   state.dismissedReminders = data.dismissedReminders;
+  state.monthNotes = data.monthNotes;
   // snapshots usados pela sincronização incremental (diff) com o Supabase,
   // ver persistTx()/persistBudgetItems() logo abaixo
   lastSyncedTransactions = JSON.parse(JSON.stringify(state.transactions));
@@ -218,6 +220,10 @@ async function persistCats(){
 async function persistSaldoInicialOverrides(){
   try{ state.saldoInicialOverrides = await dbListSaldoInicialOverrides(); }
   catch(e){ showToast('erro ao salvar saldo inicial'); }
+}
+async function persistMonthNotes(){
+  try{ state.monthNotes = await dbListMonthNotes(); }
+  catch(e){ showToast('erro ao salvar observação'); }
 }
 async function persistClosedMonths(){
   try{ state.closedMonths = await dbListClosedMonths(); }
@@ -592,6 +598,7 @@ function renderDashboard(){
   renderPieReceita(previsaoItemsReceita.length ? previsaoItemsReceita : monthTxReal);
   renderBar();
   renderInvestidoChart();
+  renderMonthNote();
 }
 
 let pieChartReceita = null;
@@ -944,6 +951,79 @@ document.getElementById('reciboShareBtn').addEventListener('click', async ()=>{
   }catch(err){
     // usuário cancelou o compartilhamento nativo — não é um erro real, ignora
   }
+});
+
+/* ---------------- Observação do mês (Painel) ---------------- */
+// texto livre por mês (currentMonth), pra registrar imprevisto/mudança que
+// fugiu do padrão — some o botão "+" e vira um card grande quando preenchida
+function renderMonthNote(){
+  const note = state.monthNotes[currentMonth];
+  const btnEl = document.getElementById('btnAddMonthNote');
+  const cardEl = document.getElementById('monthNoteCard');
+  if(note){
+    btnEl.style.display = 'none';
+    cardEl.style.display = 'block';
+    document.getElementById('monthNoteText').textContent = note;
+  } else {
+    btnEl.style.display = '';
+    cardEl.style.display = 'none';
+  }
+}
+
+const monthNoteOverlay = document.getElementById('monthNoteModalOverlay');
+function openMonthNoteModal(){
+  document.getElementById('monthNoteInput').value = state.monthNotes[currentMonth] || '';
+  monthNoteOverlay.classList.add('open');
+  setTimeout(()=> document.getElementById('monthNoteInput').focus(), 60);
+}
+function closeMonthNoteModal(){ monthNoteOverlay.classList.remove('open'); }
+document.getElementById('btnAddMonthNote').addEventListener('click', openMonthNoteModal);
+document.getElementById('btnEditMonthNote').addEventListener('click', openMonthNoteModal);
+document.getElementById('monthNoteModalClose').addEventListener('click', closeMonthNoteModal);
+document.getElementById('monthNoteCancel').addEventListener('click', closeMonthNoteModal);
+monthNoteOverlay.addEventListener('click', (e)=>{ if(e.target===monthNoteOverlay) closeMonthNoteModal(); });
+
+guardAsyncClick(document.getElementById('monthNoteSaveBtn'), async ()=>{
+  const texto = document.getElementById('monthNoteInput').value.trim();
+  if(!texto){ showToast('erro: escreva alguma coisa antes de salvar.'); return; }
+  const month = currentMonth;
+  const hadNote = Object.prototype.hasOwnProperty.call(state.monthNotes, month);
+  const oldVal = state.monthNotes[month];
+  pushUndo(async ()=>{
+    if(hadNote){
+      state.monthNotes[month] = oldVal;
+      try{ await dbSetMonthNote(month, oldVal); }catch(err){}
+    } else {
+      delete state.monthNotes[month];
+      try{ await dbDeleteMonthNote(month); }catch(err){}
+    }
+    await persistMonthNotes();
+    renderMonthNote();
+  });
+  state.monthNotes[month] = texto;
+  try{ await dbSetMonthNote(month, texto); }catch(err){ showToast('erro ao salvar: '+(err.message||'')); }
+  await persistMonthNotes();
+  closeMonthNoteModal();
+  renderMonthNote();
+  showToast('tintin! observação salva', true);
+});
+
+guardAsyncClick(document.getElementById('btnDeleteMonthNote'), async ()=>{
+  const month = currentMonth;
+  const ok = await showDialog({title:'excluir observação', message:'excluir a observação desse mês?', okLabel:'excluir'});
+  if(!ok) return;
+  const oldVal = state.monthNotes[month];
+  pushUndo(async ()=>{
+    state.monthNotes[month] = oldVal;
+    try{ await dbSetMonthNote(month, oldVal); }catch(err){}
+    await persistMonthNotes();
+    renderMonthNote();
+  });
+  delete state.monthNotes[month];
+  try{ await dbDeleteMonthNote(month); }catch(err){ showToast('erro ao excluir: '+(err.message||'')); }
+  await persistMonthNotes();
+  renderMonthNote();
+  showToast('observação excluída', true);
 });
 
 function renderBar(){
@@ -2046,7 +2126,9 @@ function renderCategorias(){
   const rEl = document.getElementById('catListReceita');
   const build = (list, type) => list.length===0
     ? '<div class="empty">nenhuma categoria ainda</div>'
-    : list.slice().sort((a,b)=> categoryTotal(b,type)-categoryTotal(a,type)).map(name=>`
+    : list.slice().sort((a,b)=> categoryTotal(b,type)-categoryTotal(a,type)).map(name=>{
+      const protegida = CATEGORIAS_PROTEGIDAS.includes(name);
+      return `
       <div class="cat-chip">
         <span class="cat-dot" style="background:${colorFor(name)}"></span>
         <div class="info">
@@ -2054,14 +2136,17 @@ function renderCategorias(){
           <div class="ctotal">${categoryCount(name,type)} lançamento(s) · ${fmtBRL(categoryTotal(name,type))}</div>
         </div>
         <div class="cactions">
+          ${protegida ? `<span class="cat-protected-tag" title="categoria do sistema — usada pro app rastrear investimentos automaticamente, não pode ser editada">
+            <svg viewBox="0 0 24 24" fill="none" width="13" height="13"><rect x="5" y="11" width="14" height="9" rx="2" stroke="currentColor" stroke-width="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </span>` : `
           <button class="icon-btn" onclick="renameCategory('${type}','${escapeAttr(name)}')" aria-label="renomear">
             <svg viewBox="0 0 24 24" fill="none"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
           </button>
           <button class="icon-btn danger" onclick="deleteCategory('${type}','${escapeAttr(name)}')" aria-label="excluir">
             <svg viewBox="0 0 24 24" fill="none"><path d="M5 7h14M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-7 0 1 13a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          </button>
+          </button>`}
         </div>
-      </div>`).join('');
+      </div>`;}).join('');
   dEl.innerHTML = build(state.categories.despesa, 'despesa');
   rEl.innerHTML = build(state.categories.receita, 'receita');
 }
@@ -2093,7 +2178,17 @@ document.querySelectorAll('.add-cat-btn').forEach(btn=>{
 // Renomear categoria: como category_id é chave estrangeira no banco, isso é
 // só um UPDATE do nome — não precisa reescrever cada lançamento/previsão,
 // eles já "seguem" o novo nome por apontarem pro mesmo id (ver data-layer.js).
+// "Investimento" e "Rendimento" são categorias especiais: o app usa o NOME
+// delas (não um id) pra rastrear aportes/retiradas e rendimento automático
+// em vários cálculos (valor investido, breakdown de investimentos, etc).
+// Renomear ou excluir quebraria esse rastreamento sem nenhum aviso, então
+// ficam travadas aqui — é o único lugar que precisa saber disso.
+const CATEGORIAS_PROTEGIDAS = ['Investimento', 'Rendimento'];
 async function renameCategory(type, oldName){
+  if(CATEGORIAS_PROTEGIDAS.includes(oldName)){
+    showToast(`erro: "${oldName}" é uma categoria do sistema (usada pro app rastrear investimentos automaticamente) e não pode ser renomeada.`);
+    return;
+  }
   const novo = await showDialog({title:'renomear categoria', message:`novo nome para "${oldName}":`, withInput:true, defaultValue:oldName, okLabel:'salvar'});
   if(!novo) return;
   const trimmed = novo.trim();
@@ -2122,6 +2217,10 @@ async function renameCategory(type, oldName){
   }
 }
 async function deleteCategory(type, name){
+  if(CATEGORIAS_PROTEGIDAS.includes(name)){
+    showToast(`erro: "${name}" é uma categoria do sistema (usada pro app rastrear investimentos automaticamente) e não pode ser excluída.`);
+    return;
+  }
   const count = categoryCount(name, type);
   const msg = count>0
     ? `"${name}" tem ${count} lançamento(s). Eles serão movidos para "Outros". Continuar?`
@@ -2355,7 +2454,7 @@ async function initApp(){
   renderCategorias();
   renderSaldos();
   renderPrevisao();
-  checkDailyReminder();
+  if(!checkDailyReminder()) checkInvestReminder();
 }
 // o app só carrega dados depois que auth.js confirma que o usuário está logado.
 // antes disso, checa se a conta ainda precisa passar pelo onboarding — se a
@@ -2376,9 +2475,9 @@ document.addEventListener('tintin:authenticated', async (e)=>{
 
 function checkDailyReminder(){
   const today = todayISO();
-  if(state.dismissedReminders.includes(today)) return;
+  if(state.dismissedReminders.includes(today)) return false;
   const items = state.budgetItems.filter(b=>b.date===today && (b.type||'despesa')==='despesa');
-  if(items.length===0) return;
+  if(items.length===0) return false;
   const total = items.reduce((s,b)=>s+b.amount,0);
   document.getElementById('reminderList').innerHTML = items.map(b=>`
     <div class="reminder-item">
@@ -2388,6 +2487,7 @@ function checkDailyReminder(){
     </div>`).join('');
   document.getElementById('reminderTotal').textContent = `total previsto pra hoje: ${fmtBRL(total)}`;
   document.getElementById('reminderOverlay').classList.add('open');
+  return true;
 }
 async function dismissReminder(){
   const today = todayISO();
@@ -2401,5 +2501,44 @@ guardAsyncClick(document.getElementById('reminderGoMapa'), async ()=>{
   await dismissReminder();
   saldosMonth = todayISO().slice(0,7);
   selectTab('saldos');
+});
+
+// LEMBRETE DE FECHAMENTO DO MÊS: o método pede pra fechar o mês e investir a
+// diferença (ganhos - previsão do mês seguinte) logo no início do mês novo —
+// como isso é 100% manual (sem fechamento automático), esse popup é o único
+// empurrão que existe pra pessoa não esquecer. Guardado no localStorage (não
+// no Supabase) igual a preferência de "saldo do dia" — é só um "já vi isso
+// esse mês", não precisa sincronizar entre aparelhos.
+function investReminderDismissKey(ym){ return 'tintin_invest_reminder_dismissed_' + ym; }
+function checkInvestReminder(){
+  const ymAtual = todayISO().slice(0,7);
+  let jaViu = false;
+  try{ jaViu = !!localStorage.getItem(investReminderDismissKey(ymAtual)); }catch(e){}
+  if(jaViu) return false;
+
+  const diaDoMes = Number(todayISO().slice(8,10));
+  if(diaDoMes > 5) return false; // só faz sentido lembrar bem no início do mês
+
+  const jaFechou = state.transactions.some(t=>t.category==='Investimento' && t.date.slice(0,7)===ymAtual);
+  if(jaFechou) return false; // já tem aporte/retirada registrado esse mês — não incomoda de novo
+
+  const nextMonth = shiftMonth(ymAtual, 1);
+  const previstoProximo = computeBudgetTotal(nextMonth, 'despesa');
+  if(previstoProximo<=0) return false; // sem previsão do mês que vem ainda, não dá pra fechar a conta
+
+  document.getElementById('investReminderMsg').textContent =
+    `${monthLabelOf(ymAtual)} começou — hora de fechar as contas do mês passado e investir a diferença.`;
+  document.getElementById('investReminderOverlay').classList.add('open');
+  return true;
+}
+function dismissInvestReminder(){
+  const ymAtual = todayISO().slice(0,7);
+  try{ localStorage.setItem(investReminderDismissKey(ymAtual), '1'); }catch(e){}
+  document.getElementById('investReminderOverlay').classList.remove('open');
+}
+document.getElementById('investReminderLater').addEventListener('click', dismissInvestReminder);
+document.getElementById('investReminderGo').addEventListener('click', ()=>{
+  dismissInvestReminder();
+  selectTab('investimentos');
 });
 

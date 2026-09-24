@@ -359,6 +359,15 @@
   }
   .chart-wrap{position:relative;height:230px;min-width:0;max-width:100%;overflow:hidden;}
   .chart-wrap canvas{max-width:100%;}
+  .month-note-card{
+    background:var(--white);border-radius:var(--radius-lg);
+    padding:22px;box-shadow:var(--shadow);margin-top:16px;
+    border-left:4px solid var(--lime);
+  }
+  .month-note-header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;}
+  .month-note-header h3{font-size:16px;margin:0;}
+  .month-note-actions{display:flex;gap:4px;flex-shrink:0;}
+  .month-note-text{margin:0;font-size:14px;line-height:1.6;color:var(--ink);white-space:pre-wrap;}
   .legend-list{display:flex;flex-direction:column;gap:8px;margin-top:14px;}
   .legend-row{display:flex;align-items:center;gap:8px;font-size:13px;}
   .legend-dot{width:10px;height:10px;border-radius:3px;flex-shrink:0;}
@@ -435,6 +444,11 @@
   .cat-chip .cname{font-weight:700;font-size:14.5px;}
   .cat-chip .ctotal{font-size:12.5px;color:var(--muted);}
   .cat-chip .cactions{display:flex;gap:4px;}
+  .cat-protected-tag{
+    display:flex;align-items:center;justify-content:center;
+    width:30px;height:30px;border-radius:50%;background:var(--cream);color:var(--muted);
+    cursor:help;flex-shrink:0;
+  }
 
   /* ---------- Auth (login/cadastro) ---------- */
   .auth-page{
@@ -677,11 +691,12 @@
   }
   .saldos-mode-menu button:hover{background:var(--cream);}
   .saldos-mode-menu button.active{color:var(--orange-2);}
-  .field input, .field select{
+  .field input, .field select, .field textarea{
     width:100%;padding:11px 14px;border-radius:var(--radius-sm);border:1.5px solid #ECE3CC;
     background:var(--cream);font-size:14.5px;outline:none;color:var(--ink);
   }
-  .field input:focus, .field select:focus{border-color:var(--orange);}
+  .field textarea{font-family:inherit;resize:vertical;line-height:1.5;}
+  .field input:focus, .field select:focus, .field textarea:focus{border-color:var(--orange);}
   .field input.invalid, .field select.invalid{border-color:var(--orange-2);background:#FCEDE7;}
   .type-toggle{display:flex;background:var(--cream);border-radius:999px;padding:4px;}
   .type-toggle button{

@@ -271,6 +271,26 @@ async function dbDeleteSaldoInicialOverride(month){
 }
 
 // ---------------------------------------------------------------------
+// OBSERVAÇÃO DO MÊS (Painel)
+// ---------------------------------------------------------------------
+async function dbListMonthNotes(){
+  const { data, error } = await supabaseClient.from('month_notes').select('*');
+  if(error) throw error;
+  const out = {};
+  (data||[]).forEach(r => out[r.month] = r.note);
+  return out;
+}
+async function dbSetMonthNote(month, note){
+  const { error } = await supabaseClient.from('month_notes')
+    .upsert({ user_id: currentUser.id, month, note, updated_at: new Date().toISOString() }, { onConflict: 'user_id,month' });
+  if(error) throw error;
+}
+async function dbDeleteMonthNote(month){
+  const { error } = await supabaseClient.from('month_notes').delete().eq('month', month);
+  if(error) throw error;
+}
+
+// ---------------------------------------------------------------------
 // FECHAMENTO DE MÊS
 // ---------------------------------------------------------------------
 async function dbListClosedMonths(){
@@ -304,7 +324,7 @@ async function dbDismissReminder(date){
 // ---------------------------------------------------------------------
 async function loadAllData(){
   await ensureDefaultCategoriesExist();
-  const [categories, transactions, budgetItems, investedBase, saldoInicialOverrides, closedMonths, dismissedReminders] = await Promise.all([
+  const [categories, transactions, budgetItems, investedBase, saldoInicialOverrides, closedMonths, dismissedReminders, monthNotes] = await Promise.all([
     dbListCategories(),
     dbListTransactions(),
     dbListBudgetItems(),
@@ -312,6 +332,7 @@ async function loadAllData(){
     dbListSaldoInicialOverrides(),
     dbListClosedMonths(),
     dbListDismissedReminders(),
+    dbListMonthNotes(),
   ]);
-  return { categories, transactions, budgetItems, investedBase, saldoInicialOverrides, closedMonths, dismissedReminders };
+  return { categories, transactions, budgetItems, investedBase, saldoInicialOverrides, closedMonths, dismissedReminders, monthNotes };
 }

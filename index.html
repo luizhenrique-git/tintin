@@ -200,6 +200,25 @@
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M8 12h8M8 16h5M7 3h10a1 1 0 0 1 1 1v16l-3-2-2 2-2-2-2 2-2-2-3 2V4a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>
         gerar recibo
       </button>
+      <button type="button" id="btnAddMonthNote" class="btn-report">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        adicionar observação
+      </button>
+    </div>
+
+    <div class="month-note-card" id="monthNoteCard" style="display:none;margin-bottom:20px;">
+      <div class="month-note-header">
+        <h3>observação do mês</h3>
+        <div class="month-note-actions">
+          <button type="button" class="icon-btn" id="btnEditMonthNote" aria-label="editar observação">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M4 20l4-1 11-11-3-3L5 16l-1 4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+          </button>
+          <button type="button" class="icon-btn danger" id="btnDeleteMonthNote" aria-label="excluir observação">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 7h14M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m-7 0 1 13a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+      </div>
+      <p class="month-note-text" id="monthNoteText"></p>
     </div>
 
     <div class="grid-2">
@@ -653,6 +672,36 @@
     <div class="modal-actions">
       <button type="button" class="btn-secondary" id="reminderGoMapa">ver no mapa</button>
       <button type="button" class="btn-primary" id="reminderOk">ok, entendi</button>
+    </div>
+  </div>
+</div>
+
+<!-- OBSERVAÇÃO DO MÊS (Painel) -->
+<div class="modal-overlay" id="monthNoteModalOverlay">
+  <div class="modal" style="max-width:460px;">
+    <button class="close-x" id="monthNoteModalClose">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    </button>
+    <h2>observação do mês</h2>
+    <div class="field">
+      <label>o que aconteceu esse mês?</label>
+      <textarea id="monthNoteInput" rows="5" placeholder="ex: tive um imprevisto médico esse mês e precisei usar parte da reserva..."></textarea>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="monthNoteCancel">cancelar</button>
+      <button type="button" class="btn-primary" id="monthNoteSaveBtn">salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- LEMBRETE DE FECHAMENTO DO MÊS (aportar no investimento) -->
+<div class="modal-overlay" id="investReminderOverlay">
+  <div class="modal" style="max-width:400px;">
+    <h2 id="investReminderTitle">fechamento do mês</h2>
+    <p class="dialog-msg" id="investReminderMsg" style="margin:0 0 18px;"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" id="investReminderLater">depois</button>
+      <button type="button" class="btn-primary" id="investReminderGo">ir pra investimentos</button>
     </div>
   </div>
 </div>
