@@ -690,6 +690,12 @@
   }
   .type-toggle button.active[data-t="despesa"]{background:var(--orange);color:#fff;}
   .type-toggle button.active[data-t="receita"]{background:#1F8C4C;color:#fff;}
+  .recibo-pre{
+    background:var(--cream);border-radius:var(--radius-sm);border:1.5px solid #ECE3CC;
+    padding:14px 16px;font-family:inherit;font-size:13.5px;line-height:1.6;color:var(--ink);
+    white-space:pre-wrap;word-break:break-word;margin:0;user-select:all;
+    max-height:50vh;overflow-y:auto;
+  }
   .modal-actions{display:flex;gap:10px;margin-top:20px;}
   .btn-secondary{
     flex:1;background:var(--cream);border:none;padding:12px;border-radius:999px;font-weight:700;color:var(--ink);

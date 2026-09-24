@@ -861,6 +861,91 @@ async function gerarRelatorioPDF(){
 }
 document.getElementById('btnGerarPDF').addEventListener('click', gerarRelatorioPDF);
 
+/* ---------------- Recibo (resumo em texto pro WhatsApp) ---------------- */
+// Junta os números vindos das mesmas funções de cálculo já usadas no painel
+// (não recalcula nada por fora) e passa pra gerarReciboTexto() (em recibo.js,
+// função pura, sem DOM) formatar o texto final.
+function coletarDadosRecibo(mesRef){
+  const asOfDate = (mesRef===todayISO().slice(0,7)) ? todayISO() : lastDayOfMonth(mesRef);
+  const investido = computeValorInvestidoAsOf(asOfDate);
+  const saldoConta = computeSaldoInicialDoMes(mesRef);
+
+  // mesma fórmula do card "economia do mês" (modo previsto) do painel:
+  // ganhos aqui já exclui o Rendimento previsto (que vira seu próprio bloco,
+  // pra não contar em dobro) e a despesa usada é a previsão do mês QUE VEM —
+  // é essa diferença que sobra pra investir, não o gasto do próprio mês.
+  const nextMonth = shiftMonth(mesRef, 1);
+  const receitasPrevistasMes = computeBudgetTotal(mesRef, 'receita');
+  const rendimentoPrevisto = state.budgetItems
+    .filter(b=>b.month===mesRef && (b.type||'despesa')==='receita' && b.category==='Rendimento')
+    .reduce((s,b)=>s+b.amount, 0);
+  const ganhos = receitasPrevistasMes - rendimentoPrevisto;
+  const despesas = computeBudgetTotal(nextMonth, 'despesa');
+
+  // rendimento: valor já previsto em Previsto > receitas > categoria
+  // "Rendimento", dividido pelos dias úteis do mês pra tirar a média diária —
+  // sem previsão de rendimento cadastrada, omite o bloco (em vez de "0,00")
+  let rendimento = null;
+  if(rendimentoPrevisto > 0){
+    const [ano, mes] = mesRef.split('-').map(Number);
+    const diasUteis = diasUteisNoMes(ano, mes);
+    if(diasUteis > 0){
+      rendimento = { porDia: rendimentoPrevisto/diasUteis, noMes: rendimentoPrevisto, diasUteis };
+    }
+  }
+
+  return { investido, saldoConta, ganhos, despesas, rendimento };
+}
+
+const reciboOverlay = document.getElementById('reciboModalOverlay');
+function openReciboModal(){
+  const mesRef = currentMonth;
+  const dados = coletarDadosRecibo(mesRef);
+  if(dados.ganhos<=0 && dados.despesas<=0){
+    showToast('erro: cadastre a previsão de ' + monthLabelOf(mesRef) + ' antes de gerar o recibo.');
+    return;
+  }
+  const texto = gerarReciboTexto(mesRef, dados);
+  document.getElementById('reciboTexto').textContent = texto;
+  document.getElementById('reciboShareBtn').style.display = (navigator.share) ? '' : 'none';
+  reciboOverlay.classList.add('open');
+}
+function closeReciboModal(){ reciboOverlay.classList.remove('open'); }
+document.getElementById('btnGerarRecibo').addEventListener('click', openReciboModal);
+document.getElementById('reciboModalClose').addEventListener('click', closeReciboModal);
+reciboOverlay.addEventListener('click', (e)=>{ if(e.target===reciboOverlay) closeReciboModal(); });
+
+document.getElementById('reciboCopyBtn').addEventListener('click', async ()=>{
+  const texto = document.getElementById('reciboTexto').textContent;
+  const btn = document.getElementById('reciboCopyBtn');
+  try{
+    await navigator.clipboard.writeText(texto);
+    showToast('recibo copiado!');
+    const original = btn.textContent;
+    btn.textContent = 'copiado ✓';
+    setTimeout(()=>{ btn.textContent = original; }, 1600);
+  }catch(err){
+    // sem permissão de clipboard (ex: fora de HTTPS/localhost) — deixa o
+    // texto selecionado no modal pra copiar manualmente como alternativa
+    const pre = document.getElementById('reciboTexto');
+    const range = document.createRange();
+    range.selectNodeContents(pre);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    showToast('erro: não consegui copiar automático — o texto já ficou selecionado, copia manualmente (Ctrl/Cmd+C).');
+  }
+});
+
+document.getElementById('reciboShareBtn').addEventListener('click', async ()=>{
+  const texto = document.getElementById('reciboTexto').textContent;
+  try{
+    await navigator.share({ text: texto });
+  }catch(err){
+    // usuário cancelou o compartilhamento nativo — não é um erro real, ignora
+  }
+});
+
 function renderBar(){
   const months = [];
   let m = currentMonth;
