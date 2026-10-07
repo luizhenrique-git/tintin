@@ -92,8 +92,14 @@ let state = {
   closedMonths: [],    // ["YYYY-MM", ...] months already closed via "fechar mês"
   saldoInicialOverrides: {}, // { "YYYY-MM": number } — manual override for the Mapa's day-1 saldo inicial
   dismissedReminders: [],    // ["YYYY-MM-DD", ...] days whose bill reminder popup was already dismissed
-  monthNotes: {}             // { "YYYY-MM": string } — observação livre do mês, mostrada no painel
+  monthNotes: {},            // { "YYYY-MM": string } — observação livre do mês, mostrada no painel
+  specialCategories: { investimento: 'Investimento', rendimento: 'Rendimento' } // nomes atuais das categorias marcadas is_investimento/is_rendimento
 };
+// use essas em vez de comparar direto com 'Investimento'/'Rendimento' —
+// refletem o nome de verdade da categoria marcada com a flag, não um texto
+// fixo (ver categoryNameByFlag() em data-layer.js)
+function catInvestimento(){ return state.specialCategories.investimento; }
+function catRendimento(){ return state.specialCategories.rendimento; }
 let currentMonth; // "YYYY-MM"
 let saldosMonth; // "YYYY-MM" — independent month cursor for the Saldos tab
 let previsaoMonth; // "YYYY-MM" — independent month cursor for the Previsão tab
@@ -157,6 +163,7 @@ async function loadState(){
   state.closedMonths = data.closedMonths;
   state.dismissedReminders = data.dismissedReminders;
   state.monthNotes = data.monthNotes;
+  state.specialCategories = data.specialCategoryNames;
   // snapshots usados pela sincronização incremental (diff) com o Supabase,
   // ver persistTx()/persistBudgetItems() logo abaixo
   lastSyncedTransactions = JSON.parse(JSON.stringify(state.transactions));
@@ -188,7 +195,14 @@ async function persistTx(){
       }
     }
     lastSyncedTransactions = JSON.parse(JSON.stringify(state.transactions));
-  }catch(e){ showToast('erro ao salvar dados: '+(e.message||'tente novamente')); }
+  }catch(e){
+    showToast('erro ao salvar dados: '+(e.message||'tente novamente'));
+    // relança o erro pra quem chamou NÃO seguir como se tivesse dado certo
+    // (sem isso, a mensagem de sucesso aparecia em cima do erro e o
+    // lançamento ficava só na tela, sumindo no próximo recarregamento —
+    // porque na real nunca chegou a salvar no banco)
+    throw e;
+  }
 }
 
 async function persistBudgetItems(){
@@ -207,7 +221,10 @@ async function persistBudgetItems(){
       }
     }
     lastSyncedBudgetItems = JSON.parse(JSON.stringify(state.budgetItems));
-  }catch(e){ showToast('erro ao salvar previsão: '+(e.message||'tente novamente')); }
+  }catch(e){
+    showToast('erro ao salvar previsão: '+(e.message||'tente novamente'));
+    throw e; // mesmo motivo do persistTx(): não deixa o chamador seguir como se tivesse salvo
+  }
 }
 
 // Criação/renomeação/exclusão de categoria são feitas direto contra o banco
@@ -285,7 +302,7 @@ async function undoLastAction(){
     state.closedMonths = snap.closedMonths;
     state.saldoInicialOverrides = snap.saldoInicialOverrides;
     lastSnapshot = null;
-    await persistAll();
+    try{ await persistAll(); }catch(e){ /* persistAll() já mostrou o toast de erro específico */ }
   }
   renderDashboard();
   renderRealizado();
@@ -410,10 +427,10 @@ const RENDIMENTO_AUTO_CUTOFF = '2026-08-01'; // Rendimento antes disso já está
 function computeValorInvestidoAsOf(dateStr){
   let v = state.investedBase || 0;
   state.transactions.forEach(t=>{
-    if(t.category==='Investimento' && t.date<=dateStr){
+    if(t.category===catInvestimento() && t.date<=dateStr){
       v += (t.type==='despesa' ? t.amount : -t.amount);
     }
-    if(t.category==='Rendimento' && t.type==='receita' && t.date<=dateStr && t.date>=RENDIMENTO_AUTO_CUTOFF){
+    if(t.category===catRendimento() && t.type==='receita' && t.date<=dateStr && t.date>=RENDIMENTO_AUTO_CUTOFF){
       v += t.amount;
     }
   });
@@ -430,10 +447,10 @@ function computeSaldoInicialDoMes(ym){
   return (state.saldoInicialOverrides[ym] != null) ? state.saldoInicialOverrides[ym] : auto;
 }
 function computeSaidasReaisDoMes(ym){
-  return txForMonth(ym).filter(t=>t.type==='despesa' && t.category!=='Investimento').reduce((s,t)=>s+t.amount,0);
+  return txForMonth(ym).filter(t=>t.type==='despesa' && t.category!==catInvestimento()).reduce((s,t)=>s+t.amount,0);
 }
 function computeReceitasReaisDoMes(ym){
-  return txForMonth(ym).filter(t=>t.type==='receita' && t.category!=='Investimento').reduce((s,t)=>s+t.amount,0);
+  return txForMonth(ym).filter(t=>t.type==='receita' && t.category!==catInvestimento()).reduce((s,t)=>s+t.amount,0);
 }
 function computeOverrunDoMes(ym){
   const saidas = computeSaidasReaisDoMes(ym);
@@ -444,7 +461,7 @@ function computeBudgetTotal(ym, type='despesa'){
   return state.budgetItems.filter(b=>b.month===ym && (b.type||'despesa')===type).reduce((s,b)=>s+b.amount,0);
 }
 function computeSaldoDisponivel(ym){
-  const despesas = txForMonth(ym).filter(t=>t.type==='despesa' && t.category!=='Investimento').reduce((s,t)=>s+t.amount,0);
+  const despesas = txForMonth(ym).filter(t=>t.type==='despesa' && t.category!==catInvestimento()).reduce((s,t)=>s+t.amount,0);
   const previsto = computeBudgetTotal(ym);
   return previsto - despesas;
 }
@@ -504,7 +521,7 @@ function renderDashboard(){
   renderGreetingCard();
   document.getElementById('monthLabel').textContent = monthLabelOf(currentMonth);
   const monthTx = txForMonth(currentMonth);
-  const monthTxReal = monthTx.filter(t=>t.category!=='Investimento');
+  const monthTxReal = monthTx.filter(t=>t.category!==catInvestimento());
   const receitas = monthTxReal.filter(t=>t.type==='receita').reduce((s,t)=>s+t.amount,0);
   const despesas = monthTxReal.filter(t=>t.type==='despesa').reduce((s,t)=>s+t.amount,0);
 
@@ -555,12 +572,12 @@ function renderDashboard(){
   const previstoProximo = computeBudgetTotal(nextMonth, 'despesa');
   document.getElementById('statPrevistoProximo').textContent = previstoProximo>0 ? fmtBRL(previstoProximo) : 'sem previsão';
   const overrun = computeOverrunDoMes(currentMonth);
-  const rendimentoReal = monthTxReal.filter(t=>t.type==='receita' && t.category==='Rendimento').reduce((s,t)=>s+t.amount,0);
+  const rendimentoReal = monthTxReal.filter(t=>t.type==='receita' && t.category===catRendimento()).reduce((s,t)=>s+t.amount,0);
   const receitasSemRendimento = receitas - rendimentoReal;
   const resultadoDoMesReal = receitasSemRendimento - overrun - previstoProximo;
   const economiaReal = resultadoDoMesReal + rendimentoReal;
   const receitasPrevistasMes = computeBudgetTotal(currentMonth, 'receita');
-  const rendimentoPrevisto = state.budgetItems.filter(b=>b.month===currentMonth && (b.type||'despesa')==='receita' && b.category==='Rendimento').reduce((s,b)=>s+b.amount,0);
+  const rendimentoPrevisto = state.budgetItems.filter(b=>b.month===currentMonth && (b.type||'despesa')==='receita' && b.category===catRendimento()).reduce((s,b)=>s+b.amount,0);
   const receitasPrevistasSemRendimento = receitasPrevistasMes - rendimentoPrevisto;
   const resultadoDoMesPrevisto = receitasPrevistasSemRendimento - previstoProximo;
   const economiaPrevista = resultadoDoMesPrevisto + rendimentoPrevisto;
@@ -649,13 +666,13 @@ function renderPieReceita(monthTx){
 // txForMonth, não duplica nem reescreve o cálculo em si.
 function computeEconomiaRealDoMes(ym){
   const monthTx = txForMonth(ym);
-  const monthTxReal = monthTx.filter(t=>t.category!=='Investimento');
+  const monthTxReal = monthTx.filter(t=>t.category!==catInvestimento());
   const receitas = monthTxReal.filter(t=>t.type==='receita').reduce((s,t)=>s+t.amount,0);
   const despesas = monthTxReal.filter(t=>t.type==='despesa').reduce((s,t)=>s+t.amount,0);
   const overrun = computeOverrunDoMes(ym);
   const nextM = shiftMonth(ym, 1);
   const previstoProximo = computeBudgetTotal(nextM, 'despesa');
-  const rendimento = monthTxReal.filter(t=>t.type==='receita' && t.category==='Rendimento').reduce((s,t)=>s+t.amount,0);
+  const rendimento = monthTxReal.filter(t=>t.type==='receita' && t.category===catRendimento()).reduce((s,t)=>s+t.amount,0);
   const receitasSemRendimento = receitas - rendimento;
   const resultadoDoMes = receitasSemRendimento - overrun - previstoProximo;
   const economia = resultadoDoMes + rendimento;
@@ -832,7 +849,7 @@ async function gerarRelatorioPDF(){
 
     // ---- despesas por categoria (prefere previsão do mês, senão realizado) ----
     const previsaoItemsDespesa = state.budgetItems.filter(b=>b.month===currentMonth && (b.type||'despesa')==='despesa');
-    const monthTxReal = txForMonth(currentMonth).filter(t=>t.category!=='Investimento');
+    const monthTxReal = txForMonth(currentMonth).filter(t=>t.category!==catInvestimento());
     const despesaSource = previsaoItemsDespesa.length ? previsaoItemsDespesa : monthTxReal.filter(t=>t.type==='despesa');
     drawCategoryList(
       `despesas por categoria${previsaoItemsDespesa.length?' (previsto)':''}`,
@@ -884,7 +901,7 @@ function coletarDadosRecibo(mesRef){
   const nextMonth = shiftMonth(mesRef, 1);
   const receitasPrevistasMes = computeBudgetTotal(mesRef, 'receita');
   const rendimentoPrevisto = state.budgetItems
-    .filter(b=>b.month===mesRef && (b.type||'despesa')==='receita' && b.category==='Rendimento')
+    .filter(b=>b.month===mesRef && (b.type||'despesa')==='receita' && b.category===catRendimento())
     .reduce((s,b)=>s+b.amount, 0);
   const ganhos = receitasPrevistasMes - rendimentoPrevisto;
   const despesas = computeBudgetTotal(nextMonth, 'despesa');
@@ -1030,8 +1047,8 @@ function renderBar(){
   const months = [];
   let m = currentMonth;
   for(let i=0;i<6;i++){ months.unshift(m); m = shiftMonth(m,-1); }
-  const receitas = months.map(ym=> txForMonth(ym).filter(t=>t.type==='receita' && t.category!=='Investimento').reduce((s,t)=>s+t.amount,0));
-  const despesas = months.map(ym=> txForMonth(ym).filter(t=>t.type==='despesa' && t.category!=='Investimento').reduce((s,t)=>s+t.amount,0));
+  const receitas = months.map(ym=> txForMonth(ym).filter(t=>t.type==='receita' && t.category!==catInvestimento()).reduce((s,t)=>s+t.amount,0));
+  const despesas = months.map(ym=> txForMonth(ym).filter(t=>t.type==='despesa' && t.category!==catInvestimento()).reduce((s,t)=>s+t.amount,0));
   const resultado = months.map((ym,i)=> receitas[i]-despesas[i]);
   const ctx = document.getElementById('barChart').getContext('2d');
   if(barChart) barChart.destroy();
@@ -1091,8 +1108,8 @@ function renderInvestidoChart(){
 // no extrato — espelha a mesma convenção usada em computeValorInvestidoAsOf,
 // sem alterar aquela função.
 function investContribution(t){
-  if(t.category==='Investimento') return t.type==='despesa' ? t.amount : -t.amount;
-  if(t.category==='Rendimento') return t.type==='receita' ? t.amount : -t.amount;
+  if(t.category===catInvestimento()) return t.type==='despesa' ? t.amount : -t.amount;
+  if(t.category===catRendimento()) return t.type==='receita' ? t.amount : -t.amount;
   return 0;
 }
 function computeInvestBreakdown(){
@@ -1100,10 +1117,10 @@ function computeInvestBreakdown(){
   let aporte = state.investedBase || 0;
   let rendimento = 0;
   state.transactions.forEach(t=>{
-    if(t.category==='Investimento' && t.date<=today){
+    if(t.category===catInvestimento() && t.date<=today){
       aporte += (t.type==='despesa' ? t.amount : -t.amount);
     }
-    if(t.category==='Rendimento' && t.type==='receita' && t.date<=today && t.date>=RENDIMENTO_AUTO_CUTOFF){
+    if(t.category===catRendimento() && t.type==='receita' && t.date<=today && t.date>=RENDIMENTO_AUTO_CUTOFF){
       rendimento += t.amount;
     }
   });
@@ -1152,7 +1169,7 @@ function renderInvestimentosChart(){
 }
 function renderInvestHistory(){
   const items = state.transactions
-    .filter(t=> t.category==='Investimento' || t.category==='Rendimento')
+    .filter(t=> t.category===catInvestimento() || t.category===catRendimento())
     .slice()
     .sort((a,b)=> b.date.localeCompare(a.date));
   const list = document.getElementById('investHistoryList');
@@ -1239,7 +1256,7 @@ guardAsyncClick(document.getElementById('aportarSaveBtn'), async ()=>{
     id: crypto.randomUUID(),
     date: aporteDate,
     desc: 'Aporte manual',
-    category: 'Investimento',
+    category: catInvestimento(),
     type: 'despesa',
     amount,
     tags: ['aporte-manual']
@@ -1288,7 +1305,7 @@ guardAsyncClick(document.getElementById('retirarSaveBtn'), async ()=>{
     id: crypto.randomUUID(),
     date: retiradaDate,
     desc: 'Retirada de investimento',
-    category: 'Investimento',
+    category: catInvestimento(),
     type: 'receita', // receita na categoria "Investimento" = resgate, reduz o valor investido (mesma convenção de computeValorInvestidoAsOf)
     amount,
     tags: ['retirada-manual']
@@ -1476,6 +1493,9 @@ const saldosModeMenu = document.getElementById('saldosModeMenu');
 function updateSaldosModeUI(){
   document.getElementById('saldosModeBtnLabel').textContent = saldosMode==='dia' ? 'saldo do dia' : 'saldo total';
   saldosModeMenu.querySelectorAll('button').forEach(b=> b.classList.toggle('active', b.dataset.mode===saldosMode));
+  document.getElementById('saldosModeInfoTip').textContent = saldosMode==='dia'
+    ? 'nesse modo as entradas não somam aqui (pra quem guarda a entrada numa conta separada) — clique em "saldo do dia" ↑ e troque pra "saldo total" pra contar com elas.'
+    : 'nesse modo entradas e saídas somam juntas no saldo do dia, normalmente.';
 }
 updateSaldosModeUI();
 saldosModeBtn.addEventListener('click', (e)=>{
@@ -1520,7 +1540,7 @@ function renderSaldos(){
   const rowsHtml = [];
   for(let d=1; d<=nDays; d++){
     const dateStr = saldosMonth+'-'+String(d).padStart(2,'0');
-    const dayTx = state.transactions.filter(t=>t.date===dateStr && t.category!=='Investimento');
+    const dayTx = state.transactions.filter(t=>t.date===dateStr && t.category!==catInvestimento());
     const entradasReais = dayTx.filter(t=>t.type==='receita').reduce((s,t)=>s+t.amount,0);
     const entradasPrevistas = state.budgetItems.filter(b=>b.date===dateStr && (b.type||'despesa')==='receita' && !b.paid && !b.variable).reduce((s,b)=>s+b.amount,0);
     const entradas = entradasReais + entradasPrevistas;
@@ -1627,7 +1647,7 @@ const dayDetailsOverlay = document.getElementById('dayDetailsOverlay');
 let dayDetailsState = null; // {dateStr, type} of the currently open modal, for in-place refresh
 function renderDayDetailsModal(dateStr, type){
   dayDetailsState = { dateStr, type };
-  const realItems = state.transactions.filter(t=>t.date===dateStr && t.type===type && t.category!=='Investimento');
+  const realItems = state.transactions.filter(t=>t.date===dateStr && t.type===type && t.category!==catInvestimento());
   const forecastItems = state.budgetItems.filter(b=>b.date===dateStr && (b.type||'despesa')===type && !b.paid && !b.variable);
   document.getElementById('dayDetailsTitle').textContent = `${type==='receita'?'entradas':'saídas'} — ${fmtDate(dateStr)}`;
   const list = document.getElementById('dayDetailsList');
@@ -1647,7 +1667,7 @@ function renderDayDetailsModal(dateStr, type){
   document.getElementById('dayDetailsTotal').textContent = `total: ${fmtBRL(total)}`;
 }
 window.showDayDetails = function(dateStr, type){
-  const realItems = state.transactions.filter(t=>t.date===dateStr && t.type===type && t.category!=='Investimento');
+  const realItems = state.transactions.filter(t=>t.date===dateStr && t.type===type && t.category!==catInvestimento());
   const forecastItems = state.budgetItems.filter(b=>b.date===dateStr && (b.type||'despesa')===type && !b.paid && !b.variable);
   if(realItems.length===0 && forecastItems.length===0) return;
   renderDayDetailsModal(dateStr, type);
@@ -1727,7 +1747,7 @@ function renderPrevisao(){
 }
 function renderPrevisaoColumn(type, listId, totalId){
   const isDespesa = type==='despesa';
-  const cats = (isDespesa ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento');
+  const cats = (isDespesa ? state.categories.despesa : state.categories.receita).filter(c=>c!==catInvestimento());
   const search = (document.getElementById('previsaoBusca').value||'').trim().toLowerCase();
   const list = document.getElementById(listId);
   list.innerHTML = cats.map((cat, idx)=>{
@@ -1791,7 +1811,7 @@ function openBudgetItemModal(presetCategory, editId, presetType){
     if(item){
       const itemType = item.type || 'despesa';
       budgetModalType = itemType;
-      sel.innerHTML = (itemType==='despesa' ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento').map(c=>`<option value="${c}">${c}</option>`).join('');
+      sel.innerHTML = (itemType==='despesa' ? state.categories.despesa : state.categories.receita).filter(c=>c!==catInvestimento()).map(c=>`<option value="${c}">${c}</option>`).join('');
       if(titleEl) titleEl.textContent = `editar ${itemType==='despesa'?'despesa':'receita'} prevista`;
       sel.value = item.category;
       document.getElementById('bDate').value = item.date || (item.month+'-01');
@@ -1805,7 +1825,7 @@ function openBudgetItemModal(presetCategory, editId, presetType){
     }
   } else {
     budgetModalType = presetType || 'despesa';
-    sel.innerHTML = (budgetModalType==='despesa' ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento').map(c=>`<option value="${c}">${c}</option>`).join('');
+    sel.innerHTML = (budgetModalType==='despesa' ? state.categories.despesa : state.categories.receita).filter(c=>c!==catInvestimento()).map(c=>`<option value="${c}">${c}</option>`).join('');
     if(titleEl) titleEl.textContent = `nova ${budgetModalType==='despesa'?'despesa':'receita'} prevista`;
     if(presetCategory) sel.value = presetCategory;
     const defaultDay = (previsaoMonth===todayISO().slice(0,7)) ? todayISO() : previsaoMonth+'-01';
@@ -1977,7 +1997,7 @@ function renderRealizado(){
 }
 function renderRealizadoColumn(type, listId, totalId){
   const isDespesa = type==='despesa';
-  const cats = (isDespesa ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento');
+  const cats = (isDespesa ? state.categories.despesa : state.categories.receita).filter(c=>c!==catInvestimento());
   const search = (document.getElementById('realizadoBusca').value||'').trim().toLowerCase();
   const monthTotal = (isDespesa ? computeSaidasReaisDoMes(realizadoMonth) : computeReceitasReaisDoMes(realizadoMonth));
   document.getElementById(totalId).textContent = fmtBRL(monthTotal);
@@ -2082,7 +2102,7 @@ function updateBulkMoveBar(){
   document.getElementById('bulkMoveCount').textContent = `${count} selecionado${count>1?'s':''}`;
   const sel = document.getElementById('bulkMoveCategory');
   const selectionType = selectedTypeOfSelection() || 'despesa';
-  const cats = (selectionType==='despesa' ? state.categories.despesa : state.categories.receita).filter(c=>c!=='Investimento');
+  const cats = (selectionType==='despesa' ? state.categories.despesa : state.categories.receita).filter(c=>c!==catInvestimento());
   const prevValue = sel.value;
   sel.innerHTML = cats.map(c=>`<option value="${c}">${c}</option>`).join('');
   if(cats.includes(prevValue)) sel.value = prevValue;
@@ -2127,7 +2147,7 @@ function renderCategorias(){
   const build = (list, type) => list.length===0
     ? '<div class="empty">nenhuma categoria ainda</div>'
     : list.slice().sort((a,b)=> categoryTotal(b,type)-categoryTotal(a,type)).map(name=>{
-      const protegida = CATEGORIAS_PROTEGIDAS.includes(name);
+      const protegida = categoriasProtegidas().includes(name);
       return `
       <div class="cat-chip">
         <span class="cat-dot" style="background:${colorFor(name)}"></span>
@@ -2178,14 +2198,14 @@ document.querySelectorAll('.add-cat-btn').forEach(btn=>{
 // Renomear categoria: como category_id é chave estrangeira no banco, isso é
 // só um UPDATE do nome — não precisa reescrever cada lançamento/previsão,
 // eles já "seguem" o novo nome por apontarem pro mesmo id (ver data-layer.js).
-// "Investimento" e "Rendimento" são categorias especiais: o app usa o NOME
-// delas (não um id) pra rastrear aportes/retiradas e rendimento automático
-// em vários cálculos (valor investido, breakdown de investimentos, etc).
-// Renomear ou excluir quebraria esse rastreamento sem nenhum aviso, então
-// ficam travadas aqui — é o único lugar que precisa saber disso.
-const CATEGORIAS_PROTEGIDAS = ['Investimento', 'Rendimento'];
+// A categoria marcada is_investimento e a marcada is_rendimento são
+// especiais: o app rastreia aportes/retiradas e rendimento automático com
+// base nelas (valor investido, breakdown de investimentos, etc). Renomear
+// ou excluir quebraria esse rastreamento sem nenhum aviso, então ficam
+// travadas aqui — é o único lugar que precisa saber disso.
+function categoriasProtegidas(){ return [catInvestimento(), catRendimento()]; }
 async function renameCategory(type, oldName){
-  if(CATEGORIAS_PROTEGIDAS.includes(oldName)){
+  if(categoriasProtegidas().includes(oldName)){
     showToast(`erro: "${oldName}" é uma categoria do sistema (usada pro app rastrear investimentos automaticamente) e não pode ser renomeada.`);
     return;
   }
@@ -2217,7 +2237,7 @@ async function renameCategory(type, oldName){
   }
 }
 async function deleteCategory(type, name){
-  if(CATEGORIAS_PROTEGIDAS.includes(name)){
+  if(categoriasProtegidas().includes(name)){
     showToast(`erro: "${name}" é uma categoria do sistema (usada pro app rastrear investimentos automaticamente) e não pode ser excluída.`);
     return;
   }
@@ -2519,7 +2539,7 @@ function checkInvestReminder(){
   const diaDoMes = Number(todayISO().slice(8,10));
   if(diaDoMes > 5) return false; // só faz sentido lembrar bem no início do mês
 
-  const jaFechou = state.transactions.some(t=>t.category==='Investimento' && t.date.slice(0,7)===ymAtual);
+  const jaFechou = state.transactions.some(t=>t.category===catInvestimento() && t.date.slice(0,7)===ymAtual);
   if(jaFechou) return false; // já tem aporte/retirada registrado esse mês — não incomoda de novo
 
   const nextMonth = shiftMonth(ymAtual, 1);

@@ -33,6 +33,15 @@ function categoryIdByName(name, type){
   const c = categoryCache.byName[categoryKey(name, type)];
   return c ? c.id : null;
 }
+// acha a categoria pela FLAG (is_investimento/is_rendimento), não pelo nome —
+// assim, mesmo que não exista mais nenhuma categoria chamada literalmente
+// "Investimento"/"Rendimento" (ex: conta antiga que perdeu essa categoria
+// antes da proteção contra exclusão existir), o app ainda consegue achar
+// a categoria certa.
+function categoryNameByFlag(flag){
+  const c = Object.values(categoryCache.byId).find(c => c[flag]);
+  return c ? c.name : null;
+}
 
 // Categorias padrão criadas para todo usuário novo (sem histórico prévio)
 const DEFAULT_CATEGORIES = [
@@ -57,6 +66,29 @@ async function ensureDefaultCategoriesExist(){
   const { error } = await supabaseClient.from('categories').insert(rows);
   if(error) throw error;
   await loadCategoryCache();
+}
+
+// Auto-reparo: garante que sempre exista UMA categoria marcada is_investimento
+// e UMA is_rendimento pra conta logada, recriando se tiver sido apagada (ex:
+// contas antigas, de antes da proteção contra excluir essas categorias
+// existir). Roda em TODO carregamento, não só pra conta nova — é rápido
+// porque a essa altura o categoryCache já está quente (loadCategoryCache()
+// já rodou dentro de ensureDefaultCategoriesExist(), chamada logo antes).
+async function ensureSpecialCategoriesExist(){
+  let changed = false;
+  if(!categoryNameByFlag('is_investimento')){
+    const { error } = await supabaseClient.from('categories')
+      .insert({ user_id: currentUser.id, name: 'Investimento', type: 'despesa', is_investimento: true });
+    if(error) throw error;
+    changed = true;
+  }
+  if(!categoryNameByFlag('is_rendimento')){
+    const { error } = await supabaseClient.from('categories')
+      .insert({ user_id: currentUser.id, name: 'Rendimento', type: 'receita', is_rendimento: true });
+    if(error) throw error;
+    changed = true;
+  }
+  if(changed) await loadCategoryCache();
 }
 
 // ---------------------------------------------------------------------
@@ -324,6 +356,7 @@ async function dbDismissReminder(date){
 // ---------------------------------------------------------------------
 async function loadAllData(){
   await ensureDefaultCategoriesExist();
+  await ensureSpecialCategoriesExist();
   const [categories, transactions, budgetItems, investedBase, saldoInicialOverrides, closedMonths, dismissedReminders, monthNotes] = await Promise.all([
     dbListCategories(),
     dbListTransactions(),
@@ -334,5 +367,13 @@ async function loadAllData(){
     dbListDismissedReminders(),
     dbListMonthNotes(),
   ]);
-  return { categories, transactions, budgetItems, investedBase, saldoInicialOverrides, closedMonths, dismissedReminders, monthNotes };
+  // nome ATUAL da categoria marcada investimento/rendimento (pode não ser
+  // literalmente "Investimento"/"Rendimento" se o dono da conta já tinha
+  // essa categoria configurada com outro nome) — o app.js usa isso em vez
+  // de comparar com o texto fixo, pra não depender do nome exato.
+  const specialCategoryNames = {
+    investimento: categoryNameByFlag('is_investimento') || 'Investimento',
+    rendimento: categoryNameByFlag('is_rendimento') || 'Rendimento',
+  };
+  return { categories, transactions, budgetItems, investedBase, saldoInicialOverrides, closedMonths, dismissedReminders, monthNotes, specialCategoryNames };
 }
