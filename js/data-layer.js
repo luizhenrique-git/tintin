@@ -74,21 +74,33 @@ async function ensureDefaultCategoriesExist(){
 // existir). Roda em TODO carregamento, não só pra conta nova — é rápido
 // porque a essa altura o categoryCache já está quente (loadCategoryCache()
 // já rodou dentro de ensureDefaultCategoriesExist(), chamada logo antes).
+async function ensureOneSpecialCategory(flag, name, type){
+  if(categoryNameByFlag(flag)) return false; // já existe uma com a flag, não mexe
+  // contas antigas podem já ter uma categoria com esse NOME, só que sem a
+  // flag marcada (criada antes dessas colunas existirem) — nesse caso é só
+  // marcar a flag nela, nunca criar outra (o banco não deixa nome duplicado
+  // pro mesmo usuário/tipo, e tentar inserir mesmo assim quebraria o login)
+  const existing = categoryCache.byName[categoryKey(name, type)];
+  if(existing){
+    const { error } = await supabaseClient.from('categories').update({ [flag]: true }).eq('id', existing.id);
+    if(error) throw error;
+  } else {
+    const { error } = await supabaseClient.from('categories')
+      .insert({ user_id: currentUser.id, name, type, [flag]: true });
+    if(error) throw error;
+  }
+  return true;
+}
+// Auto-reparo: garante que sempre exista UMA categoria marcada is_investimento
+// e UMA is_rendimento pra conta logada — recriando (ou reaproveitando uma já
+// existente com o mesmo nome) se a flag tiver se perdido. Roda em TODO
+// carregamento, não só pra conta nova — é rápido porque a essa altura o
+// categoryCache já está quente (loadCategoryCache() já rodou dentro de
+// ensureDefaultCategoriesExist(), chamada logo antes).
 async function ensureSpecialCategoriesExist(){
-  let changed = false;
-  if(!categoryNameByFlag('is_investimento')){
-    const { error } = await supabaseClient.from('categories')
-      .insert({ user_id: currentUser.id, name: 'Investimento', type: 'despesa', is_investimento: true });
-    if(error) throw error;
-    changed = true;
-  }
-  if(!categoryNameByFlag('is_rendimento')){
-    const { error } = await supabaseClient.from('categories')
-      .insert({ user_id: currentUser.id, name: 'Rendimento', type: 'receita', is_rendimento: true });
-    if(error) throw error;
-    changed = true;
-  }
-  if(changed) await loadCategoryCache();
+  const changedInvestimento = await ensureOneSpecialCategory('is_investimento', 'Investimento', 'despesa');
+  const changedRendimento = await ensureOneSpecialCategory('is_rendimento', 'Rendimento', 'receita');
+  if(changedInvestimento || changedRendimento) await loadCategoryCache();
 }
 
 // ---------------------------------------------------------------------
@@ -356,7 +368,10 @@ async function dbDismissReminder(date){
 // ---------------------------------------------------------------------
 async function loadAllData(){
   await ensureDefaultCategoriesExist();
-  await ensureSpecialCategoriesExist();
+  // auto-reparo "best effort": nunca pode travar o carregamento do app —
+  // se algo inesperado der errado aqui, segue com o nome padrão de fallback
+  // (ver specialCategoryNames logo abaixo) em vez de derrubar o login inteiro
+  try{ await ensureSpecialCategoriesExist(); }catch(e){ console.error('ensureSpecialCategoriesExist falhou:', e); }
   const [categories, transactions, budgetItems, investedBase, saldoInicialOverrides, closedMonths, dismissedReminders, monthNotes] = await Promise.all([
     dbListCategories(),
     dbListTransactions(),
